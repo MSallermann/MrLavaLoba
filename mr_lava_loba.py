@@ -466,70 +466,36 @@ def local_intersection(Xs_local,Ys_local,xc_e,yc_e,ax1,ax2,angle,xv,yv,nv2):
     return area_fract
 
 
+
+
 def main(input: Input):
     print("\nMr Lava Loba by M.de' Michieli Vitturi and S.Tarquini\n")
 
     # read the run parameters form the file inpot_data.py
     n_vents = len(input.x_vent)
 
-    if (
-        ("input.x_vent_end" in globals())
-        and (len(input.x_vent_end) > 0)
-        and (input.vent_flag > 3)
-    ):
-        first_j = 0
-        cum_fiss_length = np.zeros(n_vents + 1)
-
-    else:
-        first_j = 1
-        cum_fiss_length = np.zeros(n_vents)
-
+    # As far as we can tell the vent_flags > 3 are not implemented
+    cum_fiss_length = np.zeros(n_vents)
+    first_j = 1
     for j in range(first_j, n_vents):
-        if (
-            ("input.x_vent_end" in globals())
-            and (len(input.x_vent_end) > 0)
-            and (input.vent_flag > 3)
-        ):
-            delta_xvent = input.x_vent_end[j] - input.x_vent[j]
-            delta_yvent = input.y_vent_end[j] - input.y_vent[j]
-
-            cum_fiss_length[j + 1] = cum_fiss_length[j] + np.sqrt(
-                delta_xvent**2 + delta_yvent**2
-            )
-
-        else:
-            delta_xvent = input.x_vent[j] - input.x_vent[j - 1]
-            delta_yvent = input.y_vent[j] - input.y_vent[j - 1]
-
-            cum_fiss_length[j] = cum_fiss_length[j - 1] + np.sqrt(
-                delta_xvent**2 + delta_yvent**2
-            )
-
-    if input.fissure_probabilities is not None:
-        if input.vent_flag == 8:
-            cum_fiss_length = np.cumsum(input.fissure_probabilities)
-
-        elif input.vent_flag > 5:
-            cum_fiss_length[1:] = np.cumsum(input.fissure_probabilities)
+        delta_xvent = input.x_vent[j] - input.x_vent[j - 1]
+        delta_yvent = input.y_vent[j] - input.y_vent[j - 1]
+        cum_fiss_length[j] = cum_fiss_length[j - 1] + np.sqrt(
+            delta_xvent**2 + delta_yvent**2
+        )
 
     if n_vents > 1:
         cum_fiss_length = cum_fiss_length.astype(float) / cum_fiss_length[-1]
 
     # search if another run with the same base name already exists
     i = 0
-
     condition = True
-
     base_name = input.run_name
-
     while condition:
         input.run_name = base_name + "_{0:03}".format(i)
-
         backup_advanced_file = input.run_name + "_advanced_inp.bak"
         backup_file = input.run_name + "_inp.bak"
-
         condition = os.path.isfile(backup_file)
-
         i = i + 1
 
     # create a backup file of the input parameters
@@ -541,21 +507,16 @@ def main(input: Input):
 
     if (input.a_beta == 0) and (input.b_beta == 0):
         alloc_n_lobes = int(input.max_n_lobes)
-
     else:
         x_beta = np.rint(range(0, input.n_flows)) / (input.n_flows - 1)
-
         beta_pdf = beta.pdf(x_beta, input.a_beta, input.b_beta)
-
         alloc_n_lobes = int(
             np.rint(
                 input.min_n_lobes
                 + 0.5 * (input.max_n_lobes - input.min_n_lobes) * np.max(beta_pdf)
             )
         )
-
         print("Flow with the maximum number of lobes", np.argmax(beta_pdf))
-
     print("Maximum number of lobes", alloc_n_lobes)
 
     # initialize the arrays for the lobes variables
@@ -595,7 +556,6 @@ def main(input: Input):
 
     # Needed for numpy conversions
     deg2rad = np.pi / 180.0
-    rad2deg = 180.0 / np.pi
 
     # Define variables needed to build the ellipses
     t = np.linspace(0.0, 2.0 * np.pi, input.npoints)
@@ -603,6 +563,7 @@ def main(input: Input):
     Y_circle = np.sin(t)
 
     asc_file = read_asc_file(input)
+
     filling_parameter = (1.0 - input.thickening_parameter) * np.ones_like(asc_file.Zc)
 
     check_channel_file = not input.channel_file is None
