@@ -469,36 +469,43 @@ def local_intersection(Xs_local,Ys_local,xc_e,yc_e,ax1,ax2,angle,xv,yv,nv2):
 class MrLavaLoba:
     def __init__(self, input: Input) -> None:
         self.input = input
+        self.cum_fiss_length = np.array([], dtype=float)
+        self.n_vents: int = 0
+        self.angle = np.array([], dtype=float)
+        self.x = np.array([], dtype=float)
+        self.y = np.array([], dtype=float)
+        self.x1 = np.array([], dtype=float)
+        self.x2 = np.array([], dtype=float)
+        self.dist_int = np.array([], dtype=int)
+        self.parent = np.array([], dtype=int)
+        self.alfa_inertial = np.array([], dtype=float)
+        self.avg_lobe_thickness: float = 0
 
-    def run(self):
-        input = self.input
-
-        print("\nMr Lava Loba by M.de' Michieli Vitturi and S.Tarquini\n")
-
-        # read the run parameters form the file inpot_data.py
-        n_vents = len(input.x_vent)
-
-        # As far as we can tell the vent_flags > 3 are not implemented
-        cum_fiss_length = np.zeros(n_vents)
+    def compute_cumulative_fissure_length(self):
+        self.cum_fiss_length = np.zeros(self.n_vents)
         first_j = 1
-        for j in range(first_j, n_vents):
-            delta_xvent = input.x_vent[j] - input.x_vent[j - 1]
-            delta_yvent = input.y_vent[j] - input.y_vent[j - 1]
-            cum_fiss_length[j] = cum_fiss_length[j - 1] + np.sqrt(
+        for j in range(first_j, self.n_vents):
+            delta_xvent = self.input.x_vent[j] - self.input.x_vent[j - 1]
+            delta_yvent = self.input.y_vent[j] - self.input.y_vent[j - 1]
+            self.cum_fiss_length[j] = self.cum_fiss_length[j - 1] + np.sqrt(
                 delta_xvent**2 + delta_yvent**2
             )
 
-        if n_vents > 1:
-            cum_fiss_length = cum_fiss_length.astype(float) / cum_fiss_length[-1]
+        if self.n_vents > 1:
+            self.cum_fiss_length = (
+                self.cum_fiss_length.astype(float) / self.cum_fiss_length[-1]
+            )
 
+    def setup_run_file(self):
         # search if another run with the same base name already exists
         i = 0
         condition = True
-        base_name = input.run_name
+        base_name = self.input.run_name
+
         while condition:
-            input.run_name = base_name + "_{0:03}".format(i)
-            backup_advanced_file = input.run_name + "_advanced_inp.bak"
-            backup_file = input.run_name + "_inp.bak"
+            self.input.run_name = base_name + "_{0:03}".format(i)
+            backup_advanced_file = self.input.run_name + "_advanced_inp.bak"
+            backup_file = self.input.run_name + "_inp.bak"
             condition = os.path.isfile(backup_file)
             i = i + 1
 
@@ -506,59 +513,79 @@ class MrLavaLoba:
         shutil.copy2("input_data_advanced.py", backup_advanced_file)
         shutil.copy2("input_data.py", backup_file)
 
-        print("Run name", input.run_name)
-        print("")
+        print("Run name", self.input.run_name)
+
+    def allocate_lobe_data(self):
+        input = self.input
 
         if (input.a_beta == 0) and (input.b_beta == 0):
-            alloc_n_lobes = int(input.max_n_lobes)
+            self.alloc_n_lobes = int(input.max_n_lobes)
         else:
             x_beta = np.rint(range(0, input.n_flows)) / (input.n_flows - 1)
             beta_pdf = beta.pdf(x_beta, input.a_beta, input.b_beta)
-            alloc_n_lobes = int(
+            self.alloc_n_lobes = int(
                 np.rint(
                     input.min_n_lobes
                     + 0.5 * (input.max_n_lobes - input.min_n_lobes) * np.max(beta_pdf)
                 )
             )
             print("Flow with the maximum number of lobes", np.argmax(beta_pdf))
-        print("Maximum number of lobes", alloc_n_lobes)
+        print("Maximum number of lobes", self.alloc_n_lobes)
 
         # initialize the arrays for the lobes variables
-        angle = np.zeros(alloc_n_lobes)
-        x = np.zeros(alloc_n_lobes)
-        y = np.zeros(alloc_n_lobes)
-        x1 = np.zeros(alloc_n_lobes)
-        x2 = np.zeros(alloc_n_lobes)
-        h = np.zeros(alloc_n_lobes)
+        self.angle = np.zeros(self.alloc_n_lobes)
+        self.x = np.zeros(self.alloc_n_lobes)
+        self.y = np.zeros(self.alloc_n_lobes)
+        self.x1 = np.zeros(self.alloc_n_lobes)
+        self.x2 = np.zeros(self.alloc_n_lobes)
+        self.dist_int = np.zeros(self.alloc_n_lobes, dtype=int) - 1
+        self.parent = np.zeros(self.alloc_n_lobes, dtype=int)
+        self.alfa_inertial = np.zeros(self.alloc_n_lobes)
+        h = np.zeros(self.alloc_n_lobes)
+        descendents = np.zeros(self.alloc_n_lobes, dtype=int)
 
-        dist_int = np.zeros(alloc_n_lobes, dtype=int) - 1
-        descendents = np.zeros(alloc_n_lobes, dtype=int)
-        parent = np.zeros(alloc_n_lobes, dtype=int)
-        alfa_inertial = np.zeros(alloc_n_lobes)
+    def compute_lobe_dimensions(self):
+        input = self.input
 
         if input.volume_flag == 1:
             if input.total_volume is None:
                 raise Exception("Total volume flag not set")
 
             if input.fixed_dimension_flag == 1:
-                avg_lobe_thickness = input.total_volume / (
+                self.avg_lobe_thickness = input.total_volume / (
                     input.n_flows
                     * input.lobe_area
                     * 0.5
                     * (input.min_n_lobes + input.max_n_lobes)
                 )
                 sys.stdout.write(
-                    "Average Lobe thickness = %f m\n\n" % (avg_lobe_thickness)
+                    "Average Lobe thickness = %f m\n\n" % (self.avg_lobe_thickness)
                 )
 
             elif input.fixed_dimension_flag == 2:
                 input.lobe_area = input.total_volume / (
                     input.n_flows
-                    * avg_lobe_thickness
+                    * self.avg_lobe_thickness
                     * 0.5
                     * (input.min_n_lobes + input.max_n_lobes)
                 )
                 sys.stdout.write("Lobe area = %f m2\n\n" % (input.lobe_area))
+
+    def run(self):
+        input = self.input
+
+        print("\nMr Lava Loba by M.de' Michieli Vitturi and S.Tarquini\n")
+
+        # read the run parameters from the file input_data.py
+        self.n_vents = len(input.x_vent)
+
+        self.compute_cumulative_fissure_length()
+
+        self.setup_run_file()
+
+        self.allocate_lobe_data()
+
+        self.compute_lobe_dimensions()
 
         # Needed for numpy conversions
         deg2rad = np.pi / 180.0
@@ -612,7 +639,6 @@ class MrLavaLoba:
                 nn = np.sqrt(nnx**2 + nny**2)
                 nlx.append(nnx / nn)
                 nly.append(nny / nn)
-                # print(nlx[i],nly[i])
 
             minx, miny, maxx, maxy = ln.bounds
 
@@ -854,11 +880,11 @@ class MrLavaLoba:
         print("max_semiaxis", max_semiaxis)
         print("max_cells", max_cells)
 
-        jtop_array = np.zeros(alloc_n_lobes, dtype=int)
-        jbottom_array = np.zeros(alloc_n_lobes, dtype=int)
+        jtop_array = np.zeros(self.alloc_n_lobes, dtype=int)
+        jbottom_array = np.zeros(self.alloc_n_lobes, dtype=int)
 
-        iright_array = np.zeros(alloc_n_lobes, dtype=int)
-        ileft_array = np.zeros(alloc_n_lobes, dtype=int)
+        iright_array = np.zeros(self.alloc_n_lobes, dtype=int)
+        ileft_array = np.zeros(self.alloc_n_lobes, dtype=int)
 
         Zhazard = np.zeros((asc_file.ny, asc_file.nx), dtype=int)
         Zhazard_temp = np.zeros((asc_file.ny, asc_file.nx), dtype=int)
@@ -879,9 +905,9 @@ class MrLavaLoba:
 
         for flow in range(0, input.n_flows):
             Zflow_local_array = np.zeros(
-                (alloc_n_lobes, max_cells, max_cells), dtype=int
+                (self.alloc_n_lobes, max_cells, max_cells), dtype=int
             )
-            descendents = np.zeros(alloc_n_lobes, dtype=int)
+            descendents = np.zeros(self.alloc_n_lobes, dtype=int)
 
             i_first_check = n_check_loop
 
@@ -911,10 +937,10 @@ class MrLavaLoba:
                 2.0
                 * input.thickness_ratio
                 / (input.thickness_ratio + 1.0)
-                * avg_lobe_thickness
+                * self.avg_lobe_thickness
             )
             delta_lobe_thickness = (
-                2.0 * (avg_lobe_thickness - thickness_min) / (n_lobes - 1.0)
+                2.0 * (self.avg_lobe_thickness - thickness_min) / (n_lobes - 1.0)
             )
 
             # print ('n_lobes',n_lobes)
@@ -950,9 +976,9 @@ class MrLavaLoba:
 
                 # STEP 0: COMPUTE THE FIRST LOBES OF EACH FLOW
 
-                if n_vents == 1:
-                    x[i] = input.x_vent[0]
-                    y[i] = input.y_vent[0]
+                if self.n_vents == 1:
+                    self.x[i] = input.x_vent[0]
+                    self.y[i] = input.y_vent[0]
 
                 else:
                     if input.vent_flag == 0:
@@ -961,20 +987,20 @@ class MrLavaLoba:
                         #                   from the first vent, then from the second
                         #                   and so on.
 
-                        i_vent = int(np.floor(flow * n_vents / input.n_flows))
+                        i_vent = int(np.floor(flow * self.n_vents / input.n_flows))
 
-                        x[i] = input.x_vent[i_vent]
-                        y[i] = input.y_vent[i_vent]
+                        self.x[i] = input.x_vent[i_vent]
+                        self.y[i] = input.y_vent[i_vent]
 
                     elif input.vent_flag == 1:
                         # input.vent_flag = 1  => the initial lobes are chosen randomly from
                         #                   the vents coordinates and each vent has the
                         #                   same probability
 
-                        i_vent = np.random.randint(n_vents, size=1)
+                        i_vent = np.random.randint(self.n_vents, size=1)
 
-                        x[i] = input.x_vent[int(i_vent)]
-                        y[i] = input.y_vent[int(i_vent)]
+                        self.x[i] = input.x_vent[int(i_vent)]
+                        self.y[i] = input.y_vent[int(i_vent)]
 
                     elif (input.vent_flag == 2) or (input.vent_flag == 6):
                         # input.vent_flag = 2  => the initial lobes are on the polyline
@@ -987,22 +1013,22 @@ class MrLavaLoba:
 
                         alfa_polyline = np.random.uniform(0, 1, size=1)
 
-                        input.x_vent = np.argmax(cum_fiss_length > alfa_polyline)
+                        input.x_vent = np.argmax(self.cum_fiss_length > alfa_polyline)
 
-                        num = alfa_polyline - cum_fiss_length[input.x_vent - 1]
+                        num = alfa_polyline - self.cum_fiss_length[input.x_vent - 1]
                         den = (
-                            cum_fiss_length[input.x_vent]
-                            - cum_fiss_length[input.x_vent - 1]
+                            self.cum_fiss_length[input.x_vent]
+                            - self.cum_fiss_length[input.x_vent - 1]
                         )
 
                         alfa_segment = num / den
 
-                        x[i] = (
+                        self.x[i] = (
                             alfa_segment * input.x_vent[input.x_vent]
                             + (1.0 - alfa_segment) * input.x_vent[input.x_vent - 1]
                         )
 
-                        y[i] = (
+                        self.y[i] = (
                             alfa_segment * input.y_vent[input.x_vent]
                             + (1.0 - alfa_segment) * input.y_vent[input.x_vent - 1]
                         )
@@ -1012,16 +1038,16 @@ class MrLavaLoba:
                         #                   connecting the vents and all the segments
                         #                   of the polyline have the same probability
 
-                        i_segment = randrange(n_vents)
+                        i_segment = randrange(self.n_vents)
 
                         alfa_segment = np.random.uniform(0, 1, size=1)
 
-                        x[i] = (
+                        self.x[i] = (
                             alfa_segment * input.x_vent[i_segment]
                             + (1.0 - alfa_segment) * input.x_vent[i_segment - 1]
                         )
 
-                        y[i] = (
+                        self.y[i] = (
                             alfa_segment * input.y_vent[i_segment]
                             + (1.0 - alfa_segment) * input.y_vent[i_segment - 1]
                         )
@@ -1037,24 +1063,24 @@ class MrLavaLoba:
 
                         alfa_polyline = np.random.uniform(0, 1, size=1)
 
-                        input.x_vent = np.argmax(cum_fiss_length > alfa_polyline)
+                        input.x_vent = np.argmax(self.cum_fiss_length > alfa_polyline)
 
-                        num = alfa_polyline - cum_fiss_length[input.x_vent - 1]
+                        num = alfa_polyline - self.cum_fiss_length[input.x_vent - 1]
                         den = (
-                            cum_fiss_length[input.x_vent]
-                            - cum_fiss_length[input.x_vent - 1]
+                            self.cum_fiss_length[input.x_vent]
+                            - self.cum_fiss_length[input.x_vent - 1]
                         )
 
                         alfa_segment = num / den
                         print()
                         print(input.x_vent - 1, alfa_segment)
 
-                        x[i] = (
+                        self.x[i] = (
                             alfa_segment * input.x_vent_end[input.x_vent - 1]
                             + (1.0 - alfa_segment) * input.x_vent[input.x_vent - 1]
                         )
 
-                        y[i] = (
+                        self.y[i] = (
                             alfa_segment * input.y_vent_end[input.x_vent - 1]
                             + (1.0 - alfa_segment) * input.y_vent[input.x_vent - 1]
                         )
@@ -1064,16 +1090,16 @@ class MrLavaLoba:
                         #                   fissures and all the fissures
                         #                   have the same probability
 
-                        i_segment = randrange(n_vents)
+                        i_segment = randrange(self.n_vents)
 
                         alfa_segment = np.random.uniform(0, 1, size=1)
 
-                        x[i] = (
+                        self.x[i] = (
                             alfa_segment * input.x_vent_end[i_segment]
                             + (1.0 - alfa_segment) * input.x_vent[i_segment]
                         )
 
-                        y[i] = (
+                        self.y[i] = (
                             alfa_segment * input.y_vent_end[i_segment]
                             + (1.0 - alfa_segment) * input.y_vent[i_segment]
                         )
@@ -1084,13 +1110,13 @@ class MrLavaLoba:
                         #                   the same probability
 
                         alfa_vent = np.random.uniform(0, 1, size=1)
-                        i_vent = np.argmax(cum_fiss_length > alfa_vent)
+                        i_vent = np.argmax(self.cum_fiss_length > alfa_vent)
 
-                        x[i] = input.x_vent[int(i_vent)]
-                        y[i] = input.y_vent[int(i_vent)]
+                        self.x[i] = input.x_vent[int(i_vent)]
+                        self.y[i] = input.y_vent[int(i_vent)]
 
                 # initialize distance from first lobe and number of descendents
-                dist_int[i] = 0
+                self.dist_int[i] = 0
                 descendents[i] = 0
 
                 # compute the gradient of the topography(+ eventually the flow)
@@ -1098,8 +1124,8 @@ class MrLavaLoba:
                 # the pixels)
                 # xc[ix] < lobe_center_x < xc[ix1]
                 # yc[iy] < lobe_center_y < yc[iy1]
-                xi = (x[i] - asc_file.xcmin) / asc_file.cell
-                yi = (y[i] - asc_file.ycmin) / asc_file.cell
+                xi = (self.x[i] - asc_file.xcmin) / asc_file.cell
+                yi = (self.y[i] - asc_file.ycmin) / asc_file.cell
 
                 ix = np.floor(xi)
                 iy = np.floor(yi)
@@ -1157,10 +1183,10 @@ class MrLavaLoba:
                         rand = np.random.uniform(0, 1, size=1)
                         rand_angle_new = 360.0 * np.abs(rand - 0.5)
 
-                    angle[i] = max_slope_angle + rand_angle_new
+                    self.angle[i] = max_slope_angle + rand_angle_new
 
                 else:
-                    angle[i] = max_slope_angle
+                    self.angle[i] = max_slope_angle
 
                 # factor for the lobe eccentricity
                 aspect_ratio = min(
@@ -1168,15 +1194,21 @@ class MrLavaLoba:
                 )
 
                 # semi-axes of the lobe:
-                # x1(i) is the major semi-axis of the lobe;
-                # x2(i) is the minor semi-axis of the lobe.
-                x1[i] = np.sqrt(input.lobe_area / np.pi) * np.sqrt(aspect_ratio)
-                x2[i] = np.sqrt(input.lobe_area / np.pi) / np.sqrt(aspect_ratio)
+                # self.x1(i) is the major semi-axis of the lobe;
+                # self.x2(i) is the minor semi-axis of the lobe.
+                self.x1[i] = np.sqrt(input.lobe_area / np.pi) * np.sqrt(aspect_ratio)
+                self.x2[i] = np.sqrt(input.lobe_area / np.pi) / np.sqrt(aspect_ratio)
 
                 if input.saveraster_flag == 1:
                     # compute the points of the lobe
                     [xe, ye] = ellipse(
-                        x[i], y[i], x1[i], x2[i], angle[i], X_circle, Y_circle
+                        self.x[i],
+                        self.y[i],
+                        self.x1[i],
+                        self.x2[i],
+                        self.angle[i],
+                        X_circle,
+                        Y_circle,
                     )
 
                     # bounding box for the lobe
@@ -1216,11 +1248,11 @@ class MrLavaLoba:
                     area_fract = local_intersection(
                         Xc_local,
                         Yc_local,
-                        x[i],
-                        y[i],
-                        x1[i],
-                        x2[i],
-                        angle[i],
+                        self.x[i],
+                        self.y[i],
+                        self.x1[i],
+                        self.x2[i],
+                        self.angle[i],
                         xv,
                         yv,
                         nv2,
@@ -1254,7 +1286,7 @@ class MrLavaLoba:
 
                     # compute the new minimum "lobe distance" of the pixels from the
                     # vent
-                    Zdist_local = Zflow_local_int * dist_int[i] + 9999 * (
+                    Zdist_local = Zflow_local_int * self.dist_int[i] + 9999 * (
                         Zflow_local == 0
                     )
 
@@ -1299,7 +1331,7 @@ class MrLavaLoba:
                     if input.force_max_length:
                         # the parent lobe is chosen only among those with
                         # dist smaller than the maximum value fixed in input
-                        mask = dist_int[0:i] < input.max_length
+                        mask = self.dist_int[0:i] < input.max_length
 
                         idx2 = sum(mask[0:i]) * idx1
 
@@ -1307,7 +1339,7 @@ class MrLavaLoba:
 
                         idx = int(idx3)
 
-                        sorted_dist = np.argsort(dist_int[0:i])
+                        sorted_dist = np.argsort(self.dist_int[0:i])
 
                         idx = sorted_dist[idx]
 
@@ -1323,7 +1355,7 @@ class MrLavaLoba:
                     if input.start_from_dist_flag:
                         # the probability law is associated to the distance
                         # from the vent
-                        sorted_dist = np.argsort(dist_int[0:i])
+                        sorted_dist = np.argsort(self.dist_int[0:i])
 
                         idx = sorted_dist[idx]
 
@@ -1332,15 +1364,15 @@ class MrLavaLoba:
 
                 # save the index of the parent and the distance from first lobe of the
                 # chain
-                parent[i] = idx
-                dist_int[i] = dist_int[idx] + 1
+                self.parent[i] = idx
+                self.dist_int[i] = self.dist_int[idx] + 1
 
                 # for all the "ancestors" increase by one the number of descendents
 
                 last = i
 
-                for j in range(0, dist_int[idx] + 1):
-                    previous = parent[last]
+                for j in range(0, self.dist_int[idx] + 1):
+                    previous = self.parent[last]
                     descendents[previous] = descendents[previous] + 1
                     last = previous
 
@@ -1355,8 +1387,8 @@ class MrLavaLoba:
                 # pixels)
                 # xc[ix] < lobe_center_x < xc[ix1]
                 # yc[iy] < lobe_center_y < yc[iy1]
-                xi = (x[idx] - asc_file.xcmin) / asc_file.cell
-                yi = (y[idx] - asc_file.ycmin) / asc_file.cell
+                xi = (self.x[idx] - asc_file.xcmin) / asc_file.cell
+                yi = (self.y[idx] - asc_file.ycmin) / asc_file.cell
 
                 ix = np.floor(xi)
                 iy = np.floor(yi)
@@ -1413,7 +1445,13 @@ class MrLavaLoba:
 
                 # compute the lobe (input.npoints on the ellipse)
                 [xe, ye] = ellipse(
-                    x[idx], y[idx], x1[idx], x2[idx], angle[idx], X_circle, Y_circle
+                    self.x[idx],
+                    self.y[idx],
+                    self.x1[idx],
+                    self.x2[idx],
+                    self.angle[idx],
+                    X_circle,
+                    Y_circle,
                 )
 
                 # For all the points of the ellipse compute the indexes of the pixel
@@ -1450,8 +1488,8 @@ class MrLavaLoba:
 
                 # compute the vector from the center of the lobe to the point of
                 # minimum z on the boundary
-                Fx_lobe = x[idx] - xe[idx_min]
-                Fy_lobe = y[idx] - ye[idx_min]
+                Fx_lobe = self.x[idx] - xe[idx_min]
+                Fy_lobe = self.y[idx] - ye[idx_min]
 
                 # compute the slope and the angle
                 slope = np.maximum(
@@ -1496,26 +1534,26 @@ class MrLavaLoba:
                 # STEP 3: ADD THE EFFECT OF INERTIA
 
                 # cos and sin of the angle of the parent lobe
-                cos_angle1 = np.cos(angle[idx] * deg2rad)
-                sin_angle1 = np.sin(angle[idx] * deg2rad)
+                cos_angle1 = np.cos(self.angle[idx] * deg2rad)
+                sin_angle1 = np.sin(self.angle[idx] * deg2rad)
 
                 # cos and sin of the angle of maximum slope
                 cos_angle2 = np.cos(new_angle * deg2rad)
                 sin_angle2 = np.sin(new_angle * deg2rad)
 
                 if input.inertial_exponent == 0:
-                    alfa_inertial[i] = 0.0
+                    self.alfa_inertial[i] = 0.0
 
                 else:
-                    alfa_inertial[i] = (
+                    self.alfa_inertial[i] = (
                         1.0
                         - (2.0 * np.arctan(slope) / np.pi) ** input.inertial_exponent
                     ) ** (1.0 / input.inertial_exponent)
 
-                x_avg = (1.0 - alfa_inertial[i]) * cos_angle2 + alfa_inertial[
+                x_avg = (1.0 - self.alfa_inertial[i]) * cos_angle2 + self.alfa_inertial[
                     i
                 ] * cos_angle1
-                y_avg = (1.0 - alfa_inertial[i]) * sin_angle2 + alfa_inertial[
+                y_avg = (1.0 - self.alfa_inertial[i]) * sin_angle2 + self.alfa_inertial[
                     i
                 ] * sin_angle1
 
@@ -1579,23 +1617,23 @@ class MrLavaLoba:
                 # a define the ang.coeff. of the line defining the location of the
                 # center of the new lobe in a coordinate system defined by the
                 # semi-axes of the existing lobe
-                a = np.tan(deg2rad * (new_angle - angle[idx]))
+                a = np.tan(deg2rad * (new_angle - self.angle[idx]))
 
                 # xt is the 1st-coordinate of the point of the boundary of the ellipse
                 # definind the direction of the new lobe, in a coordinate system
                 # defined by the semi-axes of the existing lobe
-                if np.cos(deg2rad * (new_angle - angle[idx])) > 0:
+                if np.cos(deg2rad * (new_angle - self.angle[idx])) > 0:
                     xt = np.sqrt(
-                        x1[idx] ** 2
-                        * x2[idx] ** 2
-                        / (x2[idx] ** 2 + x1[idx] ** 2 * a**2)
+                        self.x1[idx] ** 2
+                        * self.x2[idx] ** 2
+                        / (self.x2[idx] ** 2 + self.x1[idx] ** 2 * a**2)
                     )
 
                 else:
                     xt = -np.sqrt(
-                        x1[idx] ** 2
-                        * x2[idx] ** 2
-                        / (x2[idx] ** 2 + x1[idx] ** 2 * a**2)
+                        self.x1[idx] ** 2
+                        * self.x2[idx] ** 2
+                        / (self.x2[idx] ** 2 + self.x1[idx] ** 2 * a**2)
                     )
 
                 # yt is the 2nd-coordinate of the point of the boundary of the ellipse
@@ -1615,8 +1653,8 @@ class MrLavaLoba:
                 # the slope coefficient is evaluated at the point of the boundary of
                 # the ellipse definind by the direction of the new lobe
 
-                xi = (x[idx] + delta_x - asc_file.xcmin) / asc_file.cell
-                yi = (y[idx] + delta_y - asc_file.ycmin) / asc_file.cell
+                xi = (self.x[idx] + delta_x - asc_file.xcmin) / asc_file.cell
+                yi = (self.y[idx] + delta_y - asc_file.ycmin) / asc_file.cell
 
                 ix = np.floor(xi)
                 iy = np.floor(yi)
@@ -1679,21 +1717,27 @@ class MrLavaLoba:
                 # STEP 5: BUILD THE NEW LOBE
 
                 # (x_new,y_new) are the coordinates of the center of the new lobe
-                x_new = x[idx] + v * delta_x
-                y_new = y[idx] + v * delta_y
+                x_new = self.x[idx] + v * delta_x
+                y_new = self.y[idx] + v * delta_y
 
                 # store the parameters of the new lobe in arrays
-                angle[i] = new_angle
-                x1[i] = new_x1
-                x2[i] = new_x2
-                x[i] = x_new
-                y[i] = y_new
+                self.angle[i] = new_angle
+                self.x1[i] = new_x1
+                self.x2[i] = new_x2
+                self.x[i] = x_new
+                self.y[i] = y_new
 
                 # check the grid points covered by the lobe
                 if input.saveraster_flag == 1:
                     # compute the new lobe
                     [xe, ye] = ellipse(
-                        x[i], y[i], x1[i], x2[i], angle[i], X_circle, Y_circle
+                        self.x[i],
+                        self.y[i],
+                        self.x1[i],
+                        self.x2[i],
+                        self.angle[i],
+                        X_circle,
+                        Y_circle,
                     )
 
                     # bounding box for the new lobe
@@ -1737,11 +1781,11 @@ class MrLavaLoba:
                     area_fract = local_intersection(
                         Xc_local,
                         Yc_local,
-                        x[i],
-                        y[i],
-                        x1[i],
-                        x2[i],
-                        angle[i],
+                        self.x[i],
+                        self.y[i],
+                        self.x1[i],
+                        self.x2[i],
+                        self.angle[i],
                         xv,
                         yv,
                         nv2,
@@ -1757,7 +1801,7 @@ class MrLavaLoba:
                     # print(Zflow_local_int)
 
                     # define the distance (number of lobes) from the vent (local index)
-                    Zdist_local = Zflow_local_int * dist_int[i] + 9999 * (
+                    Zdist_local = Zflow_local_int * self.dist_int[i] + 9999 * (
                         Zflow_local == 0
                     )
 
@@ -1806,7 +1850,7 @@ class MrLavaLoba:
                         if np.max(Zflow_local.shape) > Zflow_local_array.shape[1]:
                             print("check 3")
                             print(asc_file.cell, new_x1, new_x2, new_angle)
-                            print(x[i], y[i], x1[i], x2[i])
+                            print(self.x[i], self.y[i], self.x1[i], self.x2[i])
                             np.set_printoptions(precision=1)
                             print(Zflow_local_int)
 
@@ -1826,27 +1870,31 @@ class MrLavaLoba:
                     i_left = ileft_array[i]
 
                     if i > 0:
-                        j_top_int = np.minimum(j_top, jtop_array[parent[i]])
-                        j_bottom_int = np.maximum(j_bottom, jbottom_array[parent[i]])
-                        i_left_int = np.maximum(i_left, ileft_array[parent[i]])
-                        i_right_int = np.minimum(i_right, iright_array[parent[i]])
+                        j_top_int = np.minimum(j_top, jtop_array[self.parent[i]])
+                        j_bottom_int = np.maximum(
+                            j_bottom, jbottom_array[self.parent[i]]
+                        )
+                        i_left_int = np.maximum(i_left, ileft_array[self.parent[i]])
+                        i_right_int = np.minimum(i_right, iright_array[self.parent[i]])
 
                         Zlocal_new = np.zeros((max_cells, max_cells), dtype=int)
                         Zlocal_parent = np.zeros((max_cells, max_cells), dtype=int)
 
                         Zlocal_parent = Zflow_local_array[
-                            parent[i],
+                            self.parent[i],
                             np.maximum(
-                                0, j_bottom_int - jbottom_array[parent[i]]
+                                0, j_bottom_int - jbottom_array[self.parent[i]]
                             ) : np.minimum(
-                                j_top_int - jbottom_array[parent[i]],
-                                jtop_array[parent[i]] - jbottom_array[parent[i]],
+                                j_top_int - jbottom_array[self.parent[i]],
+                                jtop_array[self.parent[i]]
+                                - jbottom_array[self.parent[i]],
                             ),
                             np.maximum(
-                                i_left_int - ileft_array[parent[i]], 0
+                                i_left_int - ileft_array[self.parent[i]], 0
                             ) : np.minimum(
-                                i_right_int - ileft_array[parent[i]],
-                                iright_array[parent[i]] - ileft_array[parent[i]],
+                                i_right_int - ileft_array[self.parent[i]],
+                                iright_array[self.parent[i]]
+                                - ileft_array[self.parent[i]],
                             ),
                         ]
 
@@ -1859,9 +1907,17 @@ class MrLavaLoba:
                             print("idx", i)
                             print("j", j_bottom, j_top)
                             print("i", i_left, i_right)
-                            print("idx parent", parent[i])
-                            print("j", jbottom_array[parent[i]], jtop_array[parent[i]])
-                            print("i", ileft_array[parent[i]], iright_array[parent[i]])
+                            print("idx parent", self.parent[i])
+                            print(
+                                "j",
+                                jbottom_array[self.parent[i]],
+                                jtop_array[self.parent[i]],
+                            )
+                            print(
+                                "i",
+                                ileft_array[self.parent[i]],
+                                iright_array[self.parent[i]],
+                            )
                             print(j_bottom_int, j_top_int, i_left_int, i_right_int)
 
                         Zlocal_new[
@@ -2060,11 +2116,11 @@ class MrLavaLoba:
 
             for i_thr in range(n_masking):
                 if input.masking_threshold[i_thr] < 1:
-                    max_lobes = int(np.floor(np.max(Zflow / avg_lobe_thickness)))
+                    max_lobes = int(np.floor(np.max(Zflow / self.avg_lobe_thickness)))
 
                     for i in range(1, 10 * max_lobes):
                         masked_Zflow = ma.masked_where(
-                            Zflow < i * 0.1 * avg_lobe_thickness, Zflow
+                            Zflow < i * 0.1 * self.avg_lobe_thickness, Zflow
                         )
 
                         total_Zflow = np.sum(Zflow)
@@ -2116,7 +2172,7 @@ class MrLavaLoba:
                                 if i_thr == 0:
                                     the_file.write(
                                         "Average lobe thickness = "
-                                        + str(avg_lobe_thickness)
+                                        + str(self.avg_lobe_thickness)
                                         + " m\n"
                                     )
                                     the_file.write(
