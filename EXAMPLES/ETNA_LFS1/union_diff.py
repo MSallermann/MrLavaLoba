@@ -1,8 +1,8 @@
 import numpy as np
 from linecache import getline
 
-source1 = "HAWAII_020_thickness_masked.asc"
-source2 = "HAWAII_021_thickness_masked.asc"
+source1 = "LFS1_2001_025_thickness_masked.asc"
+source2 = "LFS1_2001_026_thickness_masked.asc"
 
 # Parse the header using a loop and
 # the built-in linecache module
