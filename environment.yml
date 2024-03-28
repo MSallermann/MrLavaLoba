@@ -1,0 +1,13 @@
+name: mrlavalobaenv
+channels:
+  - conda-forge
+dependencies:
+  - python
+  - pip
+  - pip:
+    - matplotlib
+    - numpy
+    - scipy
+    - numba
+    - pandas
+    - shapely
