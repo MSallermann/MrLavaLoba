@@ -1530,7 +1530,8 @@ def main(input: Input):
 
             new_angle = angle_avg
 
-            if input.alfa_channel > 0.0:
+            if not input.alfa_channel is None and input.alfa_channel > 0.0:
+
                 old_angle = new_angle
 
                 # interpolate the vector at the corners of the pixel to find the
