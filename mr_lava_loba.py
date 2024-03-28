@@ -24,7 +24,7 @@ import gc
 import pandas as pd
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List
 
 
 @dataclass
@@ -50,10 +50,16 @@ class Input:
     fissure_probabilities: Optional[float] = None
     total_volume: Optional[float] = None
     volume_flag: Optional[int] = None
-    east_to_vent: Optional[float] = 0
-    west_to_vent: Optional[float] = 0
-    south_to_vent: Optional[float] = 0
-    north_to_vent: Optional[float] = 0
+    east_to_vent: Optional[float] = None
+    west_to_vent: Optional[float] = None
+    south_to_vent: Optional[float] = None
+    north_to_vent: Optional[float] = None
+    channel_file: Optional[str] = None
+    alfa_channel: Optional[float] = None
+    d1: Optional[float] = None
+    d2: Optional[float] = None
+    eps: Optional[float] = None
+    union_diff_file: Optional[str] = None
 
     # from input_advanced
     npoints: int = 0
@@ -68,6 +74,8 @@ class Input:
     start_from_dist_flag: int = 0
     force_max_length: int = 0
     max_length: float = 0
+    restart_files: Optional[List[str]] = None
+    restart_filling_parameters: Optional[List[float]] = None
 
 
 def parse_input() -> Input:
@@ -141,6 +149,33 @@ def parse_input() -> Input:
     except AttributeError:
         input.north_to_vent = None
 
+    try:
+        input.channel_file = input_data.channel_file
+        input.alfa_channel = input_data.alfa_channel
+        input.d1 = input_data.d1
+        input.d2 = input_data.d2
+        input.eps = input_data.eps
+    except AttributeError:
+        input.channel_file = None
+        input.alfa_channel = None
+        input.d1 = None
+        input.d2 = None
+        input.eps = None
+
+    try:
+        input.restart_files = input_data_advanced.restart_files
+        input.restart_filling_parameters = (
+            input_data_advanced.restart_filling_parameters
+        )
+    except AttributeError:
+        input.restart_files = None
+        input.restart_filling_parameters = None
+
+    try:
+        input.union_diff_file = input_data.union_diff_file
+    except AttributeError:
+        input.union_diff_file = None
+
     return input
 
 
@@ -159,6 +194,14 @@ class AscFile:
     Xc = np.array([], dtype=float)
     Yc = np.array([], dtype=float)
     Zc = np.array([], dtype=float)
+    iW: int = 0
+    iE: int = 0
+    jS: int = 0
+    jN: int = 0
+    xcmin: float = 0
+    xcmax: float = 0
+    ycmin: float = 0
+    ycmax: float = 0
 
 
 def read_asc_file(input: Input):
@@ -216,19 +259,19 @@ def read_asc_file(input: Input):
         yN = np.max(input.y_vent) + input.north_to_vent
 
         # crop the DEM to the desired domain
-        iW = np.maximum(0, (np.floor((xW - lx) / asc_file.cell)).astype(int))
-        iE = np.minimum(cols, (np.ceil((xE - lx) / asc_file.cell)).astype(int))
-        jS = np.maximum(0, (np.floor((yS - ly) / asc_file.cell)).astype(int))
-        jN = np.minimum(rows, (np.ceil((yN - ly) / asc_file.cell)).astype(int))
+        asc_file.iW = np.maximum(0, (np.floor((xW - lx) / asc_file.cell)).astype(int))
+        asc_file.iE = np.minimum(cols, (np.ceil((xE - lx) / asc_file.cell)).astype(int))
+        asc_file.jS = np.maximum(0, (np.floor((yS - ly) / asc_file.cell)).astype(int))
+        asc_file.jN = np.minimum(rows, (np.ceil((yN - ly) / asc_file.cell)).astype(int))
 
         print("Cropping of original DEM")
         print("xW,xE,yS,yN", xW, xE, yS, yN)
-        print("iW,iE,jS,jN", iW, iE, jS, jN)
+        print("iW,iE,jS,jN", asc_file.iW, asc_file.iE, asc_file.jS, asc_file.jN)
         print("")
 
-        arr = arr_temp[jS:jN, iW:iE]
-        xc = xc_temp[iW:iE]
-        yc = yc_temp[jS:jN]
+        arr = arr_temp[asc_file.jS : asc_file.jN, asc_file.iW : asc_file.iE]
+        xc = xc_temp[asc_file.iW : asc_file.iE]
+        yc = yc_temp[asc_file.jS : asc_file.jN]
 
         lx = xc[0] - 0.5 * asc_file.cell
         ly = yc[0] - 0.5 * asc_file.cell
@@ -272,11 +315,11 @@ def read_asc_file(input: Input):
 
     print("Time to read DEM " + str(elapsed) + "s")
 
-    xcmin = np.min(xc)
-    xcmax = np.max(xc)
+    asc_file.xcmin = np.min(xc)
+    asc_file.xcmax = np.max(xc)
 
-    ycmin = np.min(yc)
-    ycmax = np.max(yc)
+    asc_file.ycmin = np.min(yc)
+    asc_file.ycmax = np.max(yc)
 
     asc_file.Xc, asc_file.Yc = np.meshgrid(xc, yc)
 
@@ -558,29 +601,11 @@ def main(input: Input):
     t = np.linspace(0.0, 2.0 * np.pi, input.npoints)
     X_circle = np.cos(t)
     Y_circle = np.sin(t)
-    # HERERERER
+
     asc_file = read_asc_file(input)
-    filling_parameter = (1.0 - input.thickening_parameter) * np.ones_like(Zc)
+    filling_parameter = (1.0 - input.thickening_parameter) * np.ones_like(asc_file.Zc)
 
-    try:
-        from input_data import channel_file
-        from input_data import alfa_channel
-        from input_data import d1
-        from input_data import d2
-        from input_data import eps
-
-        check_channel_file = exists(channel_file)
-
-    except ImportError:
-        print("Channel parameters not defined:")
-        print("- channel_file")
-        print("- d1")
-        print("- d2")
-        print("- eps")
-        print("- alfa_chaneel")
-
-        check_channel_file = False
-        alfa_channel = 0.0
+    check_channel_file = not input.channel_file is None
 
     if check_channel_file:
         import shapefile
@@ -588,17 +613,17 @@ def main(input: Input):
         from shapely.ops import nearest_points
 
         # arrays of components of the direction vectors computer from channel
-        vx = np.zeros_like(Xc)
-        vy = np.zeros_like(Yc)
+        vx = np.zeros_like(asc_file.Xc)
+        vy = np.zeros_like(asc_file.Yc)
 
         # arrays of distances from channel
-        distxy = np.zeros_like(Yc)
+        distxy = np.zeros_like(asc_file.Yc)
 
         print("")
 
-        print("Reading shapefile " + channel_file)
+        print("Reading shapefile " + input.channel_file)
 
-        sf = shapefile.Reader(channel_file)
+        sf = shapefile.Reader(input.channel_file)
 
         shapes = sf.shapes()
         shapeRecs = sf.shapeRecords()
@@ -624,7 +649,7 @@ def main(input: Input):
 
         print("Channel Bounding Box", minx, miny, maxx, maxy)
 
-        dx = 3.0 * d2
+        dx = 3.0 * input.d2
 
         minx = minx - dx
         maxx = maxx + dx
@@ -637,19 +662,19 @@ def main(input: Input):
         min_ye = miny
         max_ye = maxy
 
-        xi = (min_xe - xcmin) / cell
+        xi = (min_xe - asc_file.xcmin) / asc_file.cell
         ix = np.floor(xi)
         i_left = ix.astype(int)
 
-        xi = (max_xe - xcmin) / cell
+        xi = (max_xe - asc_file.xcmin) / asc_file.cell
         ix = np.floor(xi)
         i_right = ix.astype(int) + 2
 
-        yj = (min_ye - ycmin) / cell
+        yj = (min_ye - asc_file.ycmin) / asc_file.cell
         jy = np.floor(yj)
         j_bottom = jy.astype(int)
 
-        yj = (max_ye - ycmin) / cell
+        yj = (max_ye - asc_file.ycmin) / asc_file.cell
         jy = np.floor(yj)
         j_top = jy.astype(int) + 2
 
@@ -657,8 +682,8 @@ def main(input: Input):
         print("j_bottom,j_top", j_bottom, j_top)
 
         # define the subgrid of pixels to check for coverage
-        Xgrid = Xc[j_bottom:j_top, i_left:i_right]
-        Ygrid = Yc[j_bottom:j_top, i_left:i_right]
+        Xgrid = asc_file.Xc[j_bottom:j_top, i_left:i_right]
+        Ygrid = asc_file.Yc[j_bottom:j_top, i_left:i_right]
 
         xgrid = Xgrid[0, :]
         ygrid = Ygrid[:, 0]
@@ -713,7 +738,9 @@ def main(input: Input):
                 dist = []
                 for i in range(len(points) - 1):
                     dist.append(
-                        np.maximum(eps, pt.distance(LineString(points[i : i + 2])))
+                        np.maximum(
+                            input.eps, pt.distance(LineString(points[i : i + 2]))
+                        )
                     )
 
                 dist = np.array(dist) ** 2
@@ -725,7 +752,7 @@ def main(input: Input):
                 vy2 = vy2 / v2mod
 
                 dist_pl = np.exp(
-                    -pt.distance(LineString(points[0:])) ** 2 / (2.0 * d1**2)
+                    -pt.distance(LineString(points[0:])) ** 2 / (2.0 * input.d1**2)
                 )
                 vx[j_bottom + idy, i_left + idx] = dist_pl * vx2 + (1.0 - dist_pl) * vx1
                 vy[j_bottom + idy, i_left + idx] = dist_pl * vy2 + (1.0 - dist_pl) * vy1
@@ -744,7 +771,7 @@ def main(input: Input):
                     )
 
                 dist_pl = np.exp(
-                    -pt.distance(LineString(points[0:-1])) ** 2 / (2.0 * d2**2)
+                    -pt.distance(LineString(points[0:-1])) ** 2 / (2.0 * input.d2**2)
                 )
 
                 distxy[j_bottom + idy, i_left + idx] = dist_pl
@@ -752,25 +779,18 @@ def main(input: Input):
         print("Channel map completed")
         print("")
 
-    try:
-        from input_data_advanced import restart_files
-        from input_data_advanced import restart_filling_parameters
-
-        print("Restart files", restart_files)
-        n_restarts = len(restart_files)
-
-    except ImportError:
-        print("")
-        print("Restart_files not used")
+    if input.restart_files is not None:
+        n_restarts = len(input.restart_files)
+    else:
         n_restarts = 0
 
     # load restart files (if existing)
     for i_restart in range(0, n_restarts):
-        print("Read restart file ", restart_files[i_restart])
-        Zflow_old = np.zeros((ny, nx))
+        print("Read restart file ", input.restart_files[i_restart])
+        Zflow_old = np.zeros((asc_file.ny, asc_file.nx))
 
-        input.source = restart_files[i_restart]
-        file_exists = exists(input.source)
+        input.source = input.restart_files[i_restart]
+        file_exists = not input.source is None
         if not file_exists:
             print(input.source + " not found.")
             quit()
@@ -796,11 +816,11 @@ def main(input: Input):
             print("Check on restart size OK")
 
         # Load the previous flow thickness into a numpy array
-        if crop_flag:
-            specific_rows = list(np.arange(6 + rows_re - jN)) + list(
-                np.arange(6 + rows_re - jS, 6 + rows_re)
+        if asc_file.crop_flag:
+            specific_rows = list(np.arange(6 + rows_re - asc_file.jN)) + list(
+                np.arange(6 + rows_re - asc_file.jS, 6 + rows_re)
             )
-            specific_columns = list(np.arange(iW, iE))
+            specific_columns = list(np.arange(asc_file.iW, asc_file.iE))
             arr_df = pd.read_csv(
                 input.source,
                 delimiter=" ",
@@ -830,7 +850,7 @@ def main(input: Input):
         # print(np.where(Zflow_old==np.amax(Zflow_old)))
 
         # Load the relevant filling_parameter (to account for "subsurface flows")
-        filling_parameter_i = restart_filling_parameters[i_restart]
+        filling_parameter_i = input.restart_filling_parameters[i_restart]
 
         Zc = Zc + (Zflow_old * filling_parameter_i)
         print("Restart file read")
@@ -845,15 +865,15 @@ def main(input: Input):
     yv = np.reshape(yv, -1)
     nv2 = nv * nv
 
-    Ztot = np.zeros((ny, nx))
+    Ztot = np.zeros((asc_file.ny, asc_file.nx))
 
     # the first argument is the destination, the second is the input.source
-    np.copyto(Ztot, Zc)
+    np.copyto(Ztot, asc_file.Zc)
 
-    Zflow = np.zeros((ny, nx))
+    Zflow = np.zeros((asc_file.ny, asc_file.nx))
 
     max_semiaxis = np.sqrt(input.lobe_area * input.max_aspect_ratio / np.pi)
-    max_cells = np.ceil(2.0 * max_semiaxis / cell) + 2
+    max_cells = np.ceil(2.0 * max_semiaxis / asc_file.cell) + 2
     max_cells = max_cells.astype(int)
 
     print("max_semiaxis", max_semiaxis)
@@ -865,10 +885,10 @@ def main(input: Input):
     iright_array = np.zeros(alloc_n_lobes, dtype=int)
     ileft_array = np.zeros(alloc_n_lobes, dtype=int)
 
-    Zhazard = np.zeros((ny, nx), dtype=int)
-    Zhazard_temp = np.zeros((ny, nx), dtype=int)
+    Zhazard = np.zeros((asc_file.ny, asc_file.nx), dtype=int)
+    Zhazard_temp = np.zeros((asc_file.ny, asc_file.nx), dtype=int)
 
-    Zdist = np.zeros((ny, nx), dtype=int) + 9999
+    Zdist = np.zeros((asc_file.ny, asc_file.nx), dtype=int) + 9999
 
     print("End pre-processing")
     print("")
@@ -1099,8 +1119,8 @@ def main(input: Input):
             # the pixels)
             # xc[ix] < lobe_center_x < xc[ix1]
             # yc[iy] < lobe_center_y < yc[iy1]
-            xi = (x[i] - xcmin) / cell
-            yi = (y[i] - ycmin) / cell
+            xi = (x[i] - asc_file.xcmin) / asc_file.cell
+            yi = (y[i] - asc_file.ycmin) / asc_file.cell
 
             ix = np.floor(xi)
             iy = np.floor(yi)
@@ -1119,12 +1139,12 @@ def main(input: Input):
             Fx_test = (
                 yi_fract * (Ztot[iy + 1, ix + 1] - Ztot[iy + 1, ix])
                 + (1.0 - yi_fract) * (Ztot[iy, ix + 1] - Ztot[iy, ix])
-            ) / cell
+            ) / asc_file.cell
 
             Fy_test = (
                 xi_fract * (Ztot[iy + 1, ix + 1] - Ztot[iy, ix + 1])
                 + (1.0 - xi_fract) * (Ztot[iy + 1, ix] - Ztot[iy, ix])
-            ) / cell
+            ) / asc_file.cell
 
             # major semi-axis direction
             max_slope_angle = np.mod(
@@ -1189,25 +1209,25 @@ def main(input: Input):
                 min_ye = np.min(ye)
                 max_ye = np.max(ye)
 
-                xi = (min_xe - xcmin) / cell
+                xi = (min_xe - asc_file.xcmin) / asc_file.cell
                 ix = np.floor(xi)
                 i_left = ix.astype(int)
 
-                xi = (max_xe - xcmin) / cell
+                xi = (max_xe - asc_file.xcmin) / asc_file.cell
                 ix = np.floor(xi)
                 i_right = ix.astype(int) + 2
 
-                yj = (min_ye - ycmin) / cell
+                yj = (min_ye - asc_file.ycmin) / asc_file.cell
                 jy = np.floor(yj)
                 j_bottom = jy.astype(int)
 
-                yj = (max_ye - ycmin) / cell
+                yj = (max_ye - asc_file.ycmin) / asc_file.cell
                 jy = np.floor(yj)
                 j_top = jy.astype(int) + 2
 
                 # define the subgrid of pixels to check for coverage
-                Xc_local = Xc[j_bottom:j_top, i_left:i_right]
-                Yc_local = Yc[j_bottom:j_top, i_left:i_right]
+                Xc_local = asc_file.Xc[j_bottom:j_top, i_left:i_right]
+                Yc_local = asc_file.Yc[j_bottom:j_top, i_left:i_right]
 
                 # compute the fraction of cells covered by the lobe (local index)
                 # for each pixel a square [-0.5*cell;0.5*cell]X[-0.5*cell;0.5*cell]
@@ -1343,8 +1363,8 @@ def main(input: Input):
             # pixels)
             # xc[ix] < lobe_center_x < xc[ix1]
             # yc[iy] < lobe_center_y < yc[iy1]
-            xi = (x[idx] - xcmin) / cell
-            yi = (y[idx] - ycmin) / cell
+            xi = (x[idx] - asc_file.xcmin) / asc_file.cell
+            yi = (y[idx] - asc_file.ycmin) / asc_file.cell
 
             ix = np.floor(xi)
             iy = np.floor(yi)
@@ -1358,13 +1378,13 @@ def main(input: Input):
             # stopping condition (lobe close the domain boundary)
             if (
                 (ix <= 0.5 * max_cells)
-                or (ix1 >= (nx - 0.5 * max_cells))
+                or (ix1 >= (asc_file.nx - 0.5 * max_cells))
                 or (iy <= 0.5 * max_cells)
-                or (iy1 >= (ny - 0.5 * max_cells))
-                or (Zc[iy, ix] == nd)
-                or (Zc[iy1, ix1] == nd)
-                or (Zc[iy, ix1] == nd)
-                or (Zc[iy1, ix] == nd)
+                or (iy1 >= (asc_file.ny - 0.5 * max_cells))
+                or (asc_file.Zc[iy, ix] == asc_file.nd)
+                or (asc_file.Zc[iy1, ix1] == asc_file.nd)
+                or (asc_file.Zc[iy, ix1] == asc_file.nd)
+                or (asc_file.Zc[iy1, ix] == asc_file.nd)
             ):
                 last_lobe = i - 1
                 break
@@ -1408,8 +1428,8 @@ def main(input: Input):
             # containing the points. This is done with respect to the centered
             # grid. We want to interpolate from the centered values (elevation)
             # to the location of the points on the ellipse)
-            xei = (xe - xcmin) / cell
-            yei = (ye - ycmin) / cell
+            xei = (xe - asc_file.xcmin) / asc_file.cell
+            yei = (ye - asc_file.ycmin) / asc_file.cell
 
             ixe = np.floor(xei)
             iye = np.floor(yei)
@@ -1510,7 +1530,7 @@ def main(input: Input):
 
             new_angle = angle_avg
 
-            if alfa_channel > 0.0:
+            if input.alfa_channel > 0.0:
                 old_angle = new_angle
 
                 # interpolate the vector at the corners of the pixel to find the
@@ -1544,11 +1564,13 @@ def main(input: Input):
                     )
 
                     x_avg = (
-                        1.0 - alfa_channel * distxyidx
-                    ) * cos_angle_old + alfa_channel * distxyidx * cos_angle_new
+                        (1.0 - input.alfa_channel * distxyidx) * cos_angle_old
+                        + input.alfa_channel * distxyidx * cos_angle_new
+                    )
                     y_avg = (
-                        1.0 - alfa_channel * distxyidx
-                    ) * sin_angle_old + alfa_channel * distxyidx * sin_angle_new
+                        (1.0 - input.alfa_channel * distxyidx) * sin_angle_old
+                        + input.alfa_channel * distxyidx * sin_angle_new
+                    )
 
                     angle_avg = np.mod(180.0 * np.arctan2(y_avg, x_avg) / np.pi, 360.0)
 
@@ -1591,8 +1613,8 @@ def main(input: Input):
             # the slope coefficient is evaluated at the point of the boundary of
             # the ellipse definind by the direction of the new lobe
 
-            xi = (x[idx] + delta_x - xcmin) / cell
-            yi = (y[idx] + delta_y - ycmin) / cell
+            xi = (x[idx] + delta_x - asc_file.xcmin) / asc_file.cell
+            yi = (y[idx] + delta_y - asc_file.ycmin) / asc_file.cell
 
             ix = np.floor(xi)
             iy = np.floor(yi)
@@ -1606,9 +1628,9 @@ def main(input: Input):
             # stopping condition (lobe close the domain boundary)
             if (
                 (ix <= 0.5 * max_cells)
-                or (ix1 >= nx - 0.5 * max_cells)
+                or (ix1 >= asc_file.nx - 0.5 * max_cells)
                 or (iy <= 0.5 * max_cells)
-                or (iy1 >= ny - 0.5 * max_cells)
+                or (iy1 >= asc_file.ny - 0.5 * max_cells)
             ):
                 # print('ix',ix,'iy',iy)
                 last_lobe = i - 1
@@ -1679,30 +1701,30 @@ def main(input: Input):
                 min_ye = np.min(ye)
                 max_ye = np.max(ye)
 
-                xi = (min_xe - xcmin) / cell
+                xi = (min_xe - asc_file.xcmin) / asc_file.cell
                 ix = np.floor(xi)
                 i_left = ix.astype(int)
-                i_left = np.maximum(0, np.minimum(nx - 1, i_left))
+                i_left = np.maximum(0, np.minimum(asc_file.nx - 1, i_left))
 
-                xi = (max_xe - xcmin) / cell
+                xi = (max_xe - asc_file.xcmin) / asc_file.cell
                 ix = np.floor(xi)
                 i_right = ix.astype(int) + 2
-                i_right = np.maximum(0, np.minimum(nx - 1, i_right))
+                i_right = np.maximum(0, np.minimum(asc_file.nx - 1, i_right))
 
-                yj = (min_ye - ycmin) / cell
+                yj = (min_ye - asc_file.ycmin) / asc_file.cell
                 jy = np.floor(yj)
                 j_bottom = jy.astype(int)
-                j_bottom = np.maximum(0, np.minimum(ny - 1, j_bottom))
+                j_bottom = np.maximum(0, np.minimum(asc_file.ny - 1, j_bottom))
 
-                yj = (max_ye - ycmin) / cell
+                yj = (max_ye - asc_file.ycmin) / asc_file.cell
                 jy = np.floor(yj)
                 j_top = jy.astype(int) + 2
-                j_top = np.maximum(0, np.minimum(ny - 1, j_top))
+                j_top = np.maximum(0, np.minimum(asc_file.ny - 1, j_top))
 
                 # the centers of the pixels are used to compute the intersection
                 # with the lobe
-                Xc_local = Xc[j_bottom:j_top, i_left:i_right]
-                Yc_local = Yc[j_bottom:j_top, i_left:i_right]
+                Xc_local = asc_file.Xc[j_bottom:j_top, i_left:i_right]
+                Yc_local = asc_file.Yc[j_bottom:j_top, i_left:i_right]
 
                 # compute the fraction of cells covered by the lobe (local index)
                 # for each pixel a square [-0.5*cell;0.5*cell]X[-0.5*cell;0.5*cell]
@@ -1767,7 +1789,7 @@ def main(input: Input):
 
                     if np.max(Zflow_local.shape) > Zflow_local_array.shape[1]:
                         print("check 3")
-                        print(cell, new_x1, new_x2, new_angle)
+                        print(asc_file.cell, new_x1, new_x2, new_angle)
                         print(x[i], y[i], x1[i], x2[i])
                         np.set_printoptions(precision=1)
                         print(Zflow_local_int)
@@ -1893,9 +1915,9 @@ def main(input: Input):
 
         header = "ncols     %s\n" % Zflow.shape[1]
         header += "nrows    %s\n" % Zflow.shape[0]
-        header += "xllcorner " + str(lx) + "\n"
-        header += "yllcorner " + str(ly) + "\n"
-        header += "cellsize " + str(cell) + "\n"
+        header += "xllcorner " + str(asc_file.lx) + "\n"
+        header += "yllcorner " + str(asc_file.ly) + "\n"
+        header += "cellsize " + str(asc_file.cell) + "\n"
         header += "NODATA_value 0\n"
 
         output_full = input.run_name + "_thickness_full.asc"
@@ -1909,31 +1931,29 @@ def main(input: Input):
 
         flag_union_diff = False
 
-        try:
-            from input_data import union_diff_file
-
+        if input.union_diff_file is not None:
             # Parse the header using a loop and
             # the built-in linecache module
-            hdr = [getline(union_diff_file, i) for i in range(1, 7)]
+            hdr = [getline(input.union_diff_file, i) for i in range(1, 7)]
             values = [float(h.split(" ")[-1].strip()) for h in hdr]
-            Zs_temp = np.flipud(np.loadtxt(union_diff_file, skiprows=6))
+            Zs_temp = np.flipud(np.loadtxt(input.union_diff_file, skiprows=6))
 
             cols_ud, rows_ud, lx_ud, ly_ud, cell_ud, nd_ud = values
             if (
                 (cols_ud != Zflow.shape[1])
                 or (rows_ud != Zflow.shape[0])
-                or (lx_ud != lx)
-                or (ly_ud != ly)
-                or (cell_ud != cell)
+                or (lx_ud != asc_file.lx)
+                or (ly_ud != asc_file.ly)
+                or (cell_ud != asc_file.cell)
             ):
-                print("Union_diff_file", union_diff_file)
+                print("Union_diff_file", input.union_diff_file)
                 print("Different header: interpolating data")
 
                 xin = lx_ud + cell_ud * np.arange(cols_ud)
                 yin = ly_ud + cell_ud * np.arange(rows_ud)
 
-                xout = lx + cell_ud * np.arange(nx)
-                yout = ly + cell_ud * np.arange(ny)
+                xout = asc_file.lx + cell_ud * np.arange(asc_file.nx)
+                yout = asc_file.ly + cell_ud * np.arange(asc_file.ny)
 
                 Xout, Yout = np.meshgrid(xout, yout)
 
@@ -1950,12 +1970,12 @@ def main(input: Input):
             Zs_union = np.maximum(Zs1, Zs2)
 
             Zs_union = Zs_union / np.maximum(Zs_union, 1)
-            area_union = np.sum(Zs_union) * cell**2
+            area_union = np.sum(Zs_union) * asc_file.cell**2
 
             Zs_inters = np.minimum(Zs1, Zs2)
 
             Zs_inters = Zs_inters / np.maximum(Zs_inters, 1)
-            area_inters = np.sum(Zs_inters) * cell**2
+            area_inters = np.sum(Zs_inters) * asc_file.cell**2
 
             # area_inters = np.count_nonzero(Zs_inters) * cell**2
             fitting_parameter = area_inters / area_union
@@ -1965,8 +1985,18 @@ def main(input: Input):
             print("Union area", area_union, "Intersect. area", area_inters)
             print("Fitting parameter", fitting_parameter)
 
-            Zs1_mean = np.mean(Zs1 * Zs_inters) * nx * ny / np.count_nonzero(Zs_inters)
-            Zs2_mean = np.mean(Zs2 * Zs_inters) * nx * ny / np.count_nonzero(Zs_inters)
+            Zs1_mean = (
+                np.mean(Zs1 * Zs_inters)
+                * asc_file.nx
+                * asc_file.ny
+                / np.count_nonzero(Zs_inters)
+            )
+            Zs2_mean = (
+                np.mean(Zs2 * Zs_inters)
+                * asc_file.nx
+                * asc_file.ny
+                / np.count_nonzero(Zs_inters)
+            )
 
             Zs1_vol = Zs1_mean * area_inters
             Zs2_vol = Zs2_mean * area_inters
@@ -1979,8 +2009,18 @@ def main(input: Input):
 
             Zs_diff = Zs_diff * Zs_inters
 
-            avg_thick_diff = np.mean(Zs_diff) * nx * ny / np.count_nonzero(Zs_inters)
-            std_thick_diff = np.std(Zs_diff) * nx * ny / np.count_nonzero(Zs_inters)
+            avg_thick_diff = (
+                np.mean(Zs_diff)
+                * asc_file.nx
+                * asc_file.ny
+                / np.count_nonzero(Zs_inters)
+            )
+            std_thick_diff = (
+                np.std(Zs_diff)
+                * asc_file.nx
+                * asc_file.ny
+                / np.count_nonzero(Zs_inters)
+            )
             vol_diff = avg_thick_diff * area_inters
 
             rel_err_vol = vol_diff / np.maximum(Zs1_vol, Zs2_vol)
@@ -1988,7 +2028,7 @@ def main(input: Input):
             print("Thickness relative error", rel_err_vol)
             print("--------------------------------")
 
-        except ImportError:
+        else:
             print("Union_diff_file not defined")
             flag_union_diff = False
 
@@ -2027,17 +2067,17 @@ def main(input: Input):
                             print("Masking threshold", input.masking_threshold[i_thr])
                             print(
                                 "Total volume",
-                                cell**2 * total_Zflow,
+                                asc_file.cell**2 * total_Zflow,
                                 " m3 Masked volume",
-                                cell**2 * np.sum(masked_Zflow),
+                                asc_file.cell**2 * np.sum(masked_Zflow),
                                 " m3 Volume fraction",
                                 coverage_fraction,
                             )
                             print(
                                 "Total area",
-                                cell**2 * np.sum(Zflow > 0),
+                                asc_file.cell**2 * np.sum(Zflow > 0),
                                 " m2 Masked area",
-                                cell**2 * np.sum(masked_Zflow > 0),
+                                asc_file.cell**2 * np.sum(masked_Zflow > 0),
                                 " m2",
                             )
                             print(
@@ -2058,12 +2098,12 @@ def main(input: Input):
                                 )
                                 the_file.write(
                                     "Total volume = "
-                                    + str(cell**2 * total_Zflow)
+                                    + str(asc_file.cell**2 * total_Zflow)
                                     + " m3\n"
                                 )
                                 the_file.write(
                                     "Total area = "
-                                    + str(cell**2 * np.sum(Zflow > 0))
+                                    + str(asc_file.cell**2 * np.sum(Zflow > 0))
                                     + " m2\n"
                                 )
                                 the_file.write(
@@ -2079,12 +2119,12 @@ def main(input: Input):
                             )
                             the_file.write(
                                 "Masked volume = "
-                                + str(cell**2 * np.sum(masked_Zflow))
+                                + str(asc_file.cell**2 * np.sum(masked_Zflow))
                                 + " m3\n"
                             )
                             the_file.write(
                                 "Masked area = "
-                                + str(cell**2 * np.sum(masked_Zflow > 0))
+                                + str(asc_file.cell**2 * np.sum(masked_Zflow > 0))
                                 + " m2\n"
                             )
                             the_file.write(
@@ -2119,16 +2159,16 @@ def main(input: Input):
                     Zs_union = np.maximum(Zs1, Zs2)
 
                     Zs_union = Zs_union / np.maximum(Zs_union, 1)
-                    area_union = np.sum(Zs_union) * cell**2
+                    area_union = np.sum(Zs_union) * asc_file.cell**2
 
-                    # area_union = np.count_nonzero(Zs_union) * cell**2
+                    # area_union = np.count_nonzero(Zs_union) * asc_file.cell**2
 
                     Zs_inters = np.minimum(Zs1, Zs2)
 
                     Zs_inters = Zs_inters / np.maximum(Zs_inters, 1)
-                    area_inters = np.sum(Zs_inters) * cell**2
+                    area_inters = np.sum(Zs_inters) * asc_file.cell**2
 
-                    # area_inters = np.count_nonzero(Zs_inters) * cell**2
+                    # area_inters = np.count_nonzero(Zs_inters) * asc_file.cell**2
                     fitting_parameter = area_inters / area_union
 
                     print("--------------------------------")
@@ -2137,10 +2177,16 @@ def main(input: Input):
                     print("Fitting parameter", fitting_parameter)
 
                     Zs1_mean = (
-                        np.mean(Zs1 * Zs_inters) * nx * ny / np.count_nonzero(Zs_inters)
+                        np.mean(Zs1 * Zs_inters)
+                        * asc_file.nx
+                        * asc_file.ny
+                        / np.count_nonzero(Zs_inters)
                     )
                     Zs2_mean = (
-                        np.mean(Zs2 * Zs_inters) * nx * ny / np.count_nonzero(Zs_inters)
+                        np.mean(Zs2 * Zs_inters)
+                        * asc_file.nx
+                        * asc_file.ny
+                        / np.count_nonzero(Zs_inters)
                     )
 
                     Zs1_vol = Zs1_mean * area_inters
@@ -2155,10 +2201,16 @@ def main(input: Input):
                     Zs_diff = Zs_diff * Zs_inters
 
                     avg_thick_diff = (
-                        np.mean(Zs_diff) * nx * ny / np.count_nonzero(Zs_inters)
+                        np.mean(Zs_diff)
+                        * asc_file.nx
+                        * asc_file.ny
+                        / np.count_nonzero(Zs_inters)
                     )
                     std_thick_diff = (
-                        np.std(Zs_diff) * nx * ny / np.count_nonzero(Zs_inters)
+                        np.std(Zs_diff)
+                        * asc_file.nx
+                        * asc_file.ny
+                        / np.count_nonzero(Zs_inters)
                     )
                     vol_diff = avg_thick_diff * area_inters
 
@@ -2254,11 +2306,11 @@ def main(input: Input):
 
         # this is to save an additional output for the cumulative deposit,
         # if restart_files is not empty load restart files (if existing)
-        if len(restart_files) > 0:
-            for i_restart in range(0, len(restart_files)):
-                Zflow_old = np.zeros((ny, nx))
+        if len(input.restart_files) > 0:
+            for i_restart in range(0, len(input.restart_files)):
+                Zflow_old = np.zeros((asc_file.ny, asc_file.nx))
 
-                input.source = restart_files[i_restart]
+                input.source = input.restart_files[i_restart]
 
                 file_exists = exists(input.source)
                 if not file_exists:
@@ -2280,8 +2332,10 @@ def main(input: Input):
 
                 Zflow_old = np.flipud(arr)
 
-                if crop_flag:
-                    Zflow_old = Zflow_old[jS:jN, iW:iE]
+                if input.crop_flag:
+                    Zflow_old = Zflow_old[
+                        asc_file.jS : asc_file.jN, asc_file.iW : asc_file.iE
+                    ]
 
                 Zflow = Zflow + Zflow_old
 
