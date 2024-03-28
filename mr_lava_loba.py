@@ -391,63 +391,6 @@ def interp2Dgrids(xin, yin, Zin, Xout, Yout):
     return Zout
 
 
-def local_intersection(Xc_local, Yc_local, xc_e, yc_e, ax1, ax2, angle, xv, yv, nv2):
-    # the accuracy of this procedure depends on the resolution of xv and yv
-    # representing a grid of points [-0.5*cell;0.5*cell] X [-0.5*cell;0.5*cell]
-    # built around the centers
-
-    x = xs-xc_e
-    y = ys-yc_e
-
-    inside = ( ( ((x*c+y*s)/ax1)**2 + ((x*s-y*c)/ax2)**2 )<=1 )
-
-    return (inside)
-
-def local_intersection(Xs_local,Ys_local,xc_e,yc_e,ax1,ax2,angle,xv,yv,nv2):
-
-    nx_cell = Xs_local.shape[0]
-    ny_cell = Xs_local.shape[1]
- 
-    c = np.cos(angle*np.pi/180)
-    s = np.sin(angle*np.pi/180)
-   
-    c1 = c/ax1
-    s1 = s/ax1
-
-    c2 = c/ax2
-    s2 = s/ax2
-
-    xv = xv-xc_e
-    yv = yv-yc_e
-   
-    Xs_local_1d = Xs_local.ravel()
-    Ys_local_1d = Ys_local.ravel()
-               
-    c1xv_p_s1yv = c1*xv + s1*yv
-    c2yv_m_s2yv = c2*yv - s2*xv
-
-    term1 = (c1**2 + s2**2) * Xc_local_1d**2
-    term2 = (2 * c1 * s1 - 2 * c2 * s2) * Xc_local_1d * Yc_local_1d
-    term3 = np.tensordot(Xc_local_1d, 2 * c1 * c1xv_p_s1yv - 2 * s2 * c2yv_m_s2yv, 0)
-    term4 = (c2**2 + s1**2) * Yc_local_1d**2
-    term5 = np.tensordot(Yc_local_1d, 2 * c2 * c2yv_m_s2yv + 2 * s1 * c1xv_p_s1yv, 0)
-    term6 = c1xv_p_s1yv**2 + c2yv_m_s2yv**2
-
-    term124 = term1+term2+term4
-    term356 = term3+term5+term6
-
-    term_tot = term124+term356.transpose()
-
-    inside = term_tot <= 1
-
-    area_fract_1d = np.sum(inside.astype(float),axis=0)
-
-    # area_fract_1d = area_fract_1d / nv2 
-    area_fract_1d /= nv2 
-
-    return area_fract
-
-
 class MrLavaLoba:
     def __init__(self, input: Input) -> None:
         self.input = input
@@ -489,6 +432,58 @@ class MrLavaLoba:
         ye = yc + X * sin_angle + Y * cos_angle
 
         return (xe, ye)
+
+    def local_intersection(self, Xc_local, Yc_local, xc_e, yc_e, ax1, ax2, angle):
+        # the accuracy of this procedure depends on the resolution of xv and yv
+        # representing a grid of points [-0.5*cell;0.5*cell] X [-0.5*cell;0.5*cell]
+        # built around the centers
+
+        nx_cell = Xc_local.shape[0]
+        ny_cell = Xc_local.shape[1]
+
+        c = np.cos(angle * np.pi / 180)
+        s = np.sin(angle * np.pi / 180)
+
+        c1 = c / ax1
+        s1 = s / ax1
+
+        c2 = c / ax2
+        s2 = s / ax2
+
+        xv_local = self.xv - xc_e
+        yv_local = self.yv - yc_e
+
+        Xc_local_1d = Xc_local.ravel()
+        Yc_local_1d = Yc_local.ravel()
+
+        c1xv_p_s1yv = c1 * xv_local + s1 * yv_local
+        c2yv_m_s2yv = c2 * yv_local - s2 * xv_local
+
+        term1 = (c1**2 + s2**2) * Xc_local_1d**2
+        term2 = (2 * c1 * s1 - 2 * c2 * s2) * Xc_local_1d * Yc_local_1d
+        term3 = np.tensordot(
+            Xc_local_1d, 2 * c1 * c1xv_p_s1yv - 2 * s2 * c2yv_m_s2yv, 0
+        )
+        term4 = (c2**2 + s1**2) * Yc_local_1d**2
+        term5 = np.tensordot(
+            Yc_local_1d, 2 * c2 * c2yv_m_s2yv + 2 * s1 * c1xv_p_s1yv, 0
+        )
+        term6 = c1xv_p_s1yv**2 + c2yv_m_s2yv**2
+
+        term124 = term1 + term2 + term4
+        term356 = term3 + term5 + term6
+
+        term_tot = term124 + term356.transpose()
+
+        inside = term_tot <= 1
+
+        area_fract_1d = np.sum(inside.astype(float), axis=0)
+
+        area_fract_1d /= self.nv2
+
+        area_fract = area_fract_1d.reshape(nx_cell, ny_cell)
+
+        return area_fract
 
     def compute_cumulative_fissure_length(self):
         self.cum_fiss_length = np.zeros(self.n_vents)
@@ -579,6 +574,12 @@ class MrLavaLoba:
                     * (input.min_n_lobes + input.max_n_lobes)
                 )
                 sys.stdout.write("Lobe area = %f m2\n\n" % (input.lobe_area))
+
+        self.max_semiaxis = np.sqrt(input.lobe_area * input.max_aspect_ratio / np.pi)
+        self.max_cells = np.ceil(2.0 * self.max_semiaxis / self.asc_file.cell) + 2
+        self.max_cells = self.max_cells.astype(int)
+        print("max_semiaxis", self.max_semiaxis)
+        print("max_cells", self.max_cells)
 
     def check_channel_file(self):
 
@@ -762,9 +763,6 @@ class MrLavaLoba:
         input = self.input
         asc_file = self.asc_file
 
-        if not input.channel_file is None:
-            self.check_channel_file()
-
         if input.restart_files is not None:
             n_restarts = len(input.restart_files)
         else:
@@ -860,8 +858,6 @@ class MrLavaLoba:
 
         self.allocate_lobe_data()
 
-        self.compute_lobe_dimensions()
-
         # Needed for numpy conversions
         deg2rad = np.pi / 180.0
 
@@ -873,36 +869,31 @@ class MrLavaLoba:
         self.asc_file = read_asc_file(input)
         asc_file = self.asc_file
 
+        self.compute_lobe_dimensions()
+
         self.filling_parameter = (1.0 - input.thickening_parameter) * np.ones_like(
             self.asc_file.Zc
         )
 
+        if not self.input.channel_file is None:
+            self.check_channel_file()
+
         # load restart files (if existing)
         self.load_restarts()
 
-        # Define a small grid for lobe-cells intersection
+        # Define a small grid for lobe-cells intersection (for the local intersections)
         nv = 15
-        xv, yv = np.meshgrid(
+        self.xv, self.yv = np.meshgrid(
             np.linspace(-0.5 * asc_file.cell, 0.5 * asc_file.cell, nv),
             np.linspace(-0.5 * asc_file.cell, 0.5 * asc_file.cell, nv),
         )
-        xv = np.reshape(xv, -1)
-        yv = np.reshape(yv, -1)
-        nv2 = nv * nv
+        self.xv = np.reshape(self.xv, -1)
+        self.yv = np.reshape(self.yv, -1)
+        self.nv2 = nv**2
 
-        Ztot = np.zeros((asc_file.ny, asc_file.nx))
-
-        # the first argument is the destination, the second is the input.source
-        np.copyto(Ztot, asc_file.Zc)
-
+        # I think you'd rather do this
+        Ztot = np.array(asc_file.Zc)
         Zflow = np.zeros((asc_file.ny, asc_file.nx))
-
-        max_semiaxis = np.sqrt(input.lobe_area * input.max_aspect_ratio / np.pi)
-        max_cells = np.ceil(2.0 * max_semiaxis / asc_file.cell) + 2
-        max_cells = max_cells.astype(int)
-
-        print("max_semiaxis", max_semiaxis)
-        print("max_cells", max_cells)
 
         jtop_array = np.zeros(self.alloc_n_lobes, dtype=int)
         jbottom_array = np.zeros(self.alloc_n_lobes, dtype=int)
@@ -929,7 +920,7 @@ class MrLavaLoba:
 
         for flow in range(0, input.n_flows):
             Zflow_local_array = np.zeros(
-                (self.alloc_n_lobes, max_cells, max_cells), dtype=int
+                (self.alloc_n_lobes, self.max_cells, self.max_cells), dtype=int
             )
             descendents = np.zeros(self.alloc_n_lobes, dtype=int)
 
@@ -1263,7 +1254,7 @@ class MrLavaLoba:
                     # is built around its center to compute the intersection with the
                     # lobe the coverage values are associated to each pixel (at the
                     # center)
-                    area_fract = local_intersection(
+                    area_fract = self.local_intersection(
                         Xc_local,
                         Yc_local,
                         self.x[i],
@@ -1271,9 +1262,6 @@ class MrLavaLoba:
                         self.x1[i],
                         self.x2[i],
                         self.angle[i],
-                        xv,
-                        yv,
-                        nv2,
                     )
                     Zflow_local = area_fract
 
@@ -1419,10 +1407,10 @@ class MrLavaLoba:
 
                 # stopping condition (lobe close the domain boundary)
                 if (
-                    (ix <= 0.5 * max_cells)
-                    or (ix1 >= (asc_file.nx - 0.5 * max_cells))
-                    or (iy <= 0.5 * max_cells)
-                    or (iy1 >= (asc_file.ny - 0.5 * max_cells))
+                    (ix <= 0.5 * self.max_cells)
+                    or (ix1 >= (asc_file.nx - 0.5 * self.max_cells))
+                    or (iy <= 0.5 * self.max_cells)
+                    or (iy1 >= (asc_file.ny - 0.5 * self.max_cells))
                     or (asc_file.Zc[iy, ix] == asc_file.nd)
                     or (asc_file.Zc[iy1, ix1] == asc_file.nd)
                     or (asc_file.Zc[iy, ix1] == asc_file.nd)
@@ -1685,10 +1673,10 @@ class MrLavaLoba:
 
                 # stopping condition (lobe close the domain boundary)
                 if (
-                    (ix <= 0.5 * max_cells)
-                    or (ix1 >= asc_file.nx - 0.5 * max_cells)
-                    or (iy <= 0.5 * max_cells)
-                    or (iy1 >= asc_file.ny - 0.5 * max_cells)
+                    (ix <= 0.5 * self.max_cells)
+                    or (ix1 >= asc_file.nx - 0.5 * self.max_cells)
+                    or (iy <= 0.5 * self.max_cells)
+                    or (iy1 >= asc_file.ny - 0.5 * self.max_cells)
                 ):
                     # print('ix',ix,'iy',iy)
                     last_lobe = i - 1
@@ -1790,7 +1778,7 @@ class MrLavaLoba:
                     # is built around its center to compute the intersection with the
                     # lobe the coverage values are associated to each pixel (at the
                     # center)
-                    area_fract = local_intersection(
+                    area_fract = self.local_intersection(
                         Xc_local,
                         Yc_local,
                         self.x[i],
@@ -1798,9 +1786,6 @@ class MrLavaLoba:
                         self.x1[i],
                         self.x2[i],
                         self.angle[i],
-                        xv,
-                        yv,
-                        nv2,
                     )
 
                     Zflow_local = area_fract
@@ -1889,8 +1874,8 @@ class MrLavaLoba:
                         i_left_int = np.maximum(i_left, ileft_array[self.parent[i]])
                         i_right_int = np.minimum(i_right, iright_array[self.parent[i]])
 
-                        Zlocal_new = np.zeros((max_cells, max_cells), dtype=int)
-                        Zlocal_parent = np.zeros((max_cells, max_cells), dtype=int)
+                        Zlocal_new = np.zeros((self.max_cells, self.max_cells), dtype=int)
+                        Zlocal_parent = np.zeros((self.max_cells, self.max_cells), dtype=int)
 
                         Zlocal_parent = Zflow_local_array[
                             self.parent[i],
