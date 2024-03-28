@@ -391,24 +391,6 @@ def interp2Dgrids(xin, yin, Zin, Xout, Yout):
     return Zout
 
 
-def ellipse(xc, yc, ax1, ax2, angle, X_circle, Y_circle):
-    cos_angle = np.cos(angle * np.pi / 180)
-    sin_angle = np.sin(angle * np.pi / 180)
-
-    # x1 = xc + ax1 * cos_angle
-    # y1 = yc + ax1 * sin_angle
-
-    # x2 = xc - ax2 * sin_angle
-    # y2 = yc + ax2 * cos_angle
-
-    X = ax1 * X_circle
-    Y = ax2 * Y_circle
-
-    xe = xc + X*cos_angle - Y*sin_angle
-    ye = yc + X*sin_angle + Y*cos_angle
-
-    return (xe,ye)
-
 def local_intersection(Xc_local, Yc_local, xc_e, yc_e, ax1, ax2, angle, xv, yv, nv2):
     # the accuracy of this procedure depends on the resolution of xv and yv
     # representing a grid of points [-0.5*cell;0.5*cell] X [-0.5*cell;0.5*cell]
@@ -480,6 +462,33 @@ class MrLavaLoba:
         self.parent = np.array([], dtype=int)
         self.alfa_inertial = np.array([], dtype=float)
         self.avg_lobe_thickness: float = 0
+
+        self.X_circle = np.array([], dtype=float)
+        self.Y_circle = np.array([], dtype=float)
+        self.filling_parameter = np.array([], dtype=float)
+
+        self.asc_file: AscFile = AscFile()
+        self.vx = np.array([], dtype=float)
+        self.vy = np.array([], dtype=float)
+        self.distxy = np.array([], dtype=float)
+
+    def ellipse(self, xc, yc, ax1, ax2, angle):
+        cos_angle = np.cos(angle * np.pi / 180)
+        sin_angle = np.sin(angle * np.pi / 180)
+
+        # x1 = xc + ax1 * cos_angle
+        # y1 = yc + ax1 * sin_angle
+
+        # x2 = xc - ax2 * sin_angle
+        # y2 = yc + ax2 * cos_angle
+
+        X = ax1 * self.X_circle
+        Y = ax2 * self.Y_circle
+
+        xe = xc + X * cos_angle - Y * sin_angle
+        ye = yc + X * sin_angle + Y * cos_angle
+
+        return (xe, ye)
 
     def compute_cumulative_fissure_length(self):
         self.cum_fiss_length = np.zeros(self.n_vents)
@@ -571,221 +580,196 @@ class MrLavaLoba:
                 )
                 sys.stdout.write("Lobe area = %f m2\n\n" % (input.lobe_area))
 
-    def run(self):
+    def check_channel_file(self):
+
+        import shapefile
+        from shapely.geometry import Point, LineString, MultiPoint
+        from shapely.ops import nearest_points
+
         input = self.input
+        asc_file = self.asc_file
 
-        print("\nMr Lava Loba by M.de' Michieli Vitturi and S.Tarquini\n")
+        # arrays of components of the direction vectors computer from channel
+        self.vx = np.zeros_like(asc_file.Xc)
+        self.vy = np.zeros_like(asc_file.Yc)
+        # arrays of distances from channel
+        self.distxy = np.zeros_like(asc_file.Yc)
 
-        # read the run parameters from the file input_data.py
-        self.n_vents = len(input.x_vent)
+        print("")
 
-        self.compute_cumulative_fissure_length()
+        print("Reading shapefile " + input.channel_file)
 
-        self.setup_run_file()
+        sf = shapefile.Reader(input.channel_file)
 
-        self.allocate_lobe_data()
+        shapes = sf.shapes()
+        shapeRecs = sf.shapeRecords()
+        points = shapeRecs[0].shape.points[0:]
+        ln = LineString(points)
 
-        self.compute_lobe_dimensions()
+        pnew_x = points[-1][0] + 200.0 * (points[-1][0] - points[-2][0])
+        pnew_y = points[-1][1] + 200.0 * (points[-1][1] - points[-2][1])
 
-        # Needed for numpy conversions
-        deg2rad = np.pi / 180.0
+        points.append([pnew_x, pnew_y])
 
-        # Define variables needed to build the ellipses
-        t = np.linspace(0.0, 2.0 * np.pi, input.npoints)
-        X_circle = np.cos(t)
-        Y_circle = np.sin(t)
+        nlx = []
+        nly = []
+        for i in range(len(points) - 1):
+            nnx = points[i + 1][0] - points[i][0]
+            nny = points[i + 1][1] - points[i][1]
+            nn = np.sqrt(nnx**2 + nny**2)
+            nlx.append(nnx / nn)
+            nly.append(nny / nn)
 
-        asc_file = read_asc_file(input)
+        minx, miny, maxx, maxy = ln.bounds
 
-        filling_parameter = (1.0 - input.thickening_parameter) * np.ones_like(
-            asc_file.Zc
-        )
+        print("Channel Bounding Box", minx, miny, maxx, maxy)
 
-        check_channel_file = not input.channel_file is None
+        dx = 3.0 * input.d2
 
-        if check_channel_file:
-            import shapefile
-            from shapely.geometry import Point, LineString, MultiPoint
-            from shapely.ops import nearest_points
+        minx = minx - dx
+        maxx = maxx + dx
+        miny = miny - dx
+        maxy = maxy + dx
 
-            # arrays of components of the direction vectors computer from channel
-            vx = np.zeros_like(asc_file.Xc)
-            vy = np.zeros_like(asc_file.Yc)
+        min_xe = minx
+        max_xe = maxx
 
-            # arrays of distances from channel
-            distxy = np.zeros_like(asc_file.Yc)
+        min_ye = miny
+        max_ye = maxy
 
-            print("")
+        xi = (min_xe - asc_file.xcmin) / asc_file.cell
+        ix = np.floor(xi)
+        i_left = ix.astype(int)
 
-            print("Reading shapefile " + input.channel_file)
+        xi = (max_xe - asc_file.xcmin) / asc_file.cell
+        ix = np.floor(xi)
+        i_right = ix.astype(int) + 2
 
-            sf = shapefile.Reader(input.channel_file)
+        yj = (min_ye - asc_file.ycmin) / asc_file.cell
+        jy = np.floor(yj)
+        j_bottom = jy.astype(int)
 
-            shapes = sf.shapes()
-            shapeRecs = sf.shapeRecords()
-            points = shapeRecs[0].shape.points[0:]
-            ln = LineString(points)
+        yj = (max_ye - asc_file.ycmin) / asc_file.cell
+        jy = np.floor(yj)
+        j_top = jy.astype(int) + 2
 
-            pnew_x = points[-1][0] + 200.0 * (points[-1][0] - points[-2][0])
-            pnew_y = points[-1][1] + 200.0 * (points[-1][1] - points[-2][1])
+        print("i_left,i_right", i_left, i_right)
+        print("j_bottom,j_top", j_bottom, j_top)
 
-            points.append([pnew_x, pnew_y])
+        # define the subgrid of pixels to check for coverage
+        Xgrid = asc_file.Xc[j_bottom:j_top, i_left:i_right]
+        Ygrid = asc_file.Yc[j_bottom:j_top, i_left:i_right]
 
-            nlx = []
-            nly = []
-            for i in range(len(points) - 1):
-                nnx = points[i + 1][0] - points[i][0]
-                nny = points[i + 1][1] - points[i][1]
-                nn = np.sqrt(nnx**2 + nny**2)
-                nlx.append(nnx / nn)
-                nly.append(nny / nn)
+        xgrid = Xgrid[0, :]
+        ygrid = Ygrid[:, 0]
 
-            minx, miny, maxx, maxy = ln.bounds
+        coords = np.vstack((Xgrid.ravel(), Ygrid.ravel())).T
+        pts = MultiPoint(coords)
+        """
+        dist_pl = np.zeros_like(arr)
 
-            print("Channel Bounding Box", minx, miny, maxx, maxy)
+        for idx, valx in enumerate(xgrid):
+            for idy, valy in enumerate(ygrid):
 
-            dx = 3.0 * input.d2
-
-            minx = minx - dx
-            maxx = maxx + dx
-            miny = miny - dx
-            maxy = maxy + dx
-
-            min_xe = minx
-            max_xe = maxx
-
-            min_ye = miny
-            max_ye = maxy
-
-            xi = (min_xe - asc_file.xcmin) / asc_file.cell
-            ix = np.floor(xi)
-            i_left = ix.astype(int)
-
-            xi = (max_xe - asc_file.xcmin) / asc_file.cell
-            ix = np.floor(xi)
-            i_right = ix.astype(int) + 2
-
-            yj = (min_ye - asc_file.ycmin) / asc_file.cell
-            jy = np.floor(yj)
-            j_bottom = jy.astype(int)
-
-            yj = (max_ye - asc_file.ycmin) / asc_file.cell
-            jy = np.floor(yj)
-            j_top = jy.astype(int) + 2
-
-            print("i_left,i_right", i_left, i_right)
-            print("j_bottom,j_top", j_bottom, j_top)
-
-            # define the subgrid of pixels to check for coverage
-            Xgrid = asc_file.Xc[j_bottom:j_top, i_left:i_right]
-            Ygrid = asc_file.Yc[j_bottom:j_top, i_left:i_right]
-
-            xgrid = Xgrid[0, :]
-            ygrid = Ygrid[:, 0]
-
-            coords = np.vstack((Xgrid.ravel(), Ygrid.ravel())).T
-            pts = MultiPoint(coords)
-            """
-            dist_pl = np.zeros_like(arr)
-
-            for idx, valx in enumerate(xgrid):
-                for idy, valy in enumerate(ygrid):
-
-                    pt = Point(valx,valy)
-                    dist = np.exp(-pt.distance(ln)**2 / ( 2.0*d1**2))
-                    dist_pl[j_bottom+idy,i_left+idx] = dist
-                    filling_parameter[j_bottom+idy,i_left+idx] *= ( 1.0 - dist)
+                pt = Point(valx,valy)
+                dist = np.exp(-pt.distance(ln)**2 / ( 2.0*d1**2))
+                dist_pl[j_bottom+idy,i_left+idx] = dist
+                filling_parameter[j_bottom+idy,i_left+idx] *= ( 1.0 - dist)
 
 
-            header = "ncols     %s\n" % arr.shape[1]
-            header += "nrows    %s\n" % arr.shape[0]
-            header += "xllcorner " + str(lx) +"\n"
-            header += "yllcorner " + str(ly) +"\n"
-            header += "cellsize " + str(cell) +"\n"
-            header += "NODATA_value 0\n"
+        header = "ncols     %s\n" % arr.shape[1]
+        header += "nrows    %s\n" % arr.shape[0]
+        header += "xllcorner " + str(lx) +"\n"
+        header += "yllcorner " + str(ly) +"\n"
+        header += "cellsize " + str(cell) +"\n"
+        header += "NODATA_value 0\n"
 
-            print('dist_pl',np.shape(dist_pl))
+        print('dist_pl',np.shape(dist_pl))
 
-            output_full = input.run_name + '_channel_distance.asc'
-            Zc -= 10*dist_pl
+        output_full = input.run_name + '_channel_distance.asc'
+        Zc -= 10*dist_pl
 
 
-            print('Zc',np.shape(Zc))
-            alfa_channel = 0.0
+        print('Zc',np.shape(Zc))
+        alfa_channel = 0.0
 
-            np.savetxt(output_full, np.flipud(dist_pl), header=header,
-                    fmt='%1.5f',comments='')
-            """
-            # print(ciao)
+        np.savetxt(output_full, np.flipud(dist_pl), header=header,
+                fmt='%1.5f',comments='')
+        """
+        # print(ciao)
 
-            for idx, valx in enumerate(xgrid):
-                for idy, valy in enumerate(ygrid):
-                    pt = Point(valx, valy)
+        for idx, valx in enumerate(xgrid):
+            for idy, valy in enumerate(ygrid):
+                pt = Point(valx, valy)
 
-                    p1, p2 = nearest_points(ln, pt)
-                    xx, yy = p1.coords.xy
-                    vx1 = xx - valx
-                    vy1 = yy - valy
-                    v1mod = np.sqrt(vx1**2 + vy1**2)
-                    vx1 = vx1 / v1mod
-                    vy1 = vy1 / v1mod
+                p1, p2 = nearest_points(ln, pt)
+                xx, yy = p1.coords.xy
+                vx1 = xx - valx
+                vy1 = yy - valy
+                v1mod = np.sqrt(vx1**2 + vy1**2)
+                vx1 = vx1 / v1mod
+                vy1 = vy1 / v1mod
 
-                    dist = []
-                    for i in range(len(points) - 1):
-                        dist.append(
-                            np.maximum(
-                                input.eps, pt.distance(LineString(points[i : i + 2]))
-                            )
+                dist = []
+                for i in range(len(points) - 1):
+                    dist.append(
+                        np.maximum(
+                            input.eps, pt.distance(LineString(points[i : i + 2]))
                         )
-
-                    dist = np.array(dist) ** 2
-                    vx2 = np.sum(np.array(nlx) / dist) / np.sum(1.0 / np.array(dist))
-                    vy2 = np.sum(np.array(nly) / dist) / np.sum(1.0 / np.array(dist))
-
-                    v2mod = np.sqrt(vx2**2 + vy2**2)
-                    vx2 = vx2 / v2mod
-                    vy2 = vy2 / v2mod
-
-                    dist_pl = np.exp(
-                        -pt.distance(LineString(points[0:])) ** 2
-                        / (2.0 * input.d1**2)
-                    )
-                    vx[j_bottom + idy, i_left + idx] = (
-                        dist_pl * vx2 + (1.0 - dist_pl) * vx1
-                    )
-                    vy[j_bottom + idy, i_left + idx] = (
-                        dist_pl * vy2 + (1.0 - dist_pl) * vy1
                     )
 
-                    vmod = np.sqrt(
-                        vx[j_bottom + idy, i_left + idx] ** 2
-                        + vy[j_bottom + idy, i_left + idx] ** 2
+                dist = np.array(dist) ** 2
+                vx2 = np.sum(np.array(nlx) / dist) / np.sum(1.0 / np.array(dist))
+                vy2 = np.sum(np.array(nly) / dist) / np.sum(1.0 / np.array(dist))
+
+                v2mod = np.sqrt(vx2**2 + vy2**2)
+                vx2 = vx2 / v2mod
+                vy2 = vy2 / v2mod
+
+                dist_pl = np.exp(
+                    -pt.distance(LineString(points[0:])) ** 2 / (2.0 * input.d1**2)
+                )
+                self.vx[j_bottom + idy, i_left + idx] = (
+                    dist_pl * vx2 + (1.0 - dist_pl) * vx1
+                )
+                self.vy[j_bottom + idy, i_left + idx] = (
+                    dist_pl * vy2 + (1.0 - dist_pl) * vy1
+                )
+
+                vmod = np.sqrt(
+                    self.vx[j_bottom + idy, i_left + idx] ** 2
+                    + self.vy[j_bottom + idy, i_left + idx] ** 2
+                )
+
+                if vmod > 0:
+                    self.vx[j_bottom + idy, i_left + idx] = (
+                        self.vx[j_bottom + idy, i_left + idx] / vmod
+                    )
+                    self.vy[j_bottom + idy, i_left + idx] = (
+                        self.vy[j_bottom + idy, i_left + idx] / vmod
                     )
 
-                    if vmod > 0:
-                        vx[j_bottom + idy, i_left + idx] = (
-                            vx[j_bottom + idy, i_left + idx] / vmod
-                        )
-                        vy[j_bottom + idy, i_left + idx] = (
-                            vy[j_bottom + idy, i_left + idx] / vmod
-                        )
+                dist_pl = np.exp(
+                    -pt.distance(LineString(points[0:-1])) ** 2 / (2.0 * input.d2**2)
+                )
 
-                    dist_pl = np.exp(
-                        -pt.distance(LineString(points[0:-1])) ** 2
-                        / (2.0 * input.d2**2)
-                    )
+                self.distxy[j_bottom + idy, i_left + idx] = dist_pl
 
-                    distxy[j_bottom + idy, i_left + idx] = dist_pl
+        print("Channel map completed")
+        print("")
 
-            print("Channel map completed")
-            print("")
+    def load_restarts(self):
+        input = self.input
+        asc_file = self.asc_file
+
+        if not input.channel_file is None:
+            self.check_channel_file()
 
         if input.restart_files is not None:
             n_restarts = len(input.restart_files)
         else:
             n_restarts = 0
 
-        # load restart files (if existing)
         for i_restart in range(0, n_restarts):
             print("Read restart file ", input.restart_files[i_restart])
             Zflow_old = np.zeros((asc_file.ny, asc_file.nx))
@@ -805,12 +789,18 @@ class MrLavaLoba:
                 print(hdr)
 
             cols_re, rows_re, lx_re, ly_re, cell_re, nd_re = values_restart
+            header_asc = [
+                asc_file.cols,
+                asc_file.rows,
+                asc_file.lx,
+                asc_file.ly,
+                asc_file.cell,
+            ]
 
-            if values[0:5] != values_restart[0:5]:
+            if header_asc != values_restart[0:5]:
                 print("Check on restart size failed")
-
-                print(values[0:5])
-                print(values_restart[0:5])
+                print(header_asc)
+                print(values_restart)
                 sys.exit(0)
 
             else:
@@ -855,6 +845,40 @@ class MrLavaLoba:
 
             Zc = Zc + (Zflow_old * filling_parameter_i)
             print("Restart file read")
+
+    def run(self):
+        input = self.input
+
+        print("\nMr Lava Loba by M.de' Michieli Vitturi and S.Tarquini\n")
+
+        # read the run parameters from the file input_data.py
+        self.n_vents = len(input.x_vent)
+
+        self.compute_cumulative_fissure_length()
+
+        self.setup_run_file()
+
+        self.allocate_lobe_data()
+
+        self.compute_lobe_dimensions()
+
+        # Needed for numpy conversions
+        deg2rad = np.pi / 180.0
+
+        # Define variables needed to build the ellipses
+        t = np.linspace(0.0, 2.0 * np.pi, input.npoints)
+        self.X_circle = np.cos(t)
+        self.Y_circle = np.sin(t)
+
+        self.asc_file = read_asc_file(input)
+        asc_file = self.asc_file
+
+        self.filling_parameter = (1.0 - input.thickening_parameter) * np.ones_like(
+            self.asc_file.Zc
+        )
+
+        # load restart files (if existing)
+        self.load_restarts()
 
         # Define a small grid for lobe-cells intersection
         nv = 15
@@ -1201,14 +1225,8 @@ class MrLavaLoba:
 
                 if input.saveraster_flag == 1:
                     # compute the points of the lobe
-                    [xe, ye] = ellipse(
-                        self.x[i],
-                        self.y[i],
-                        self.x1[i],
-                        self.x2[i],
-                        self.angle[i],
-                        X_circle,
-                        Y_circle,
+                    [xe, ye] = self.ellipse(
+                        self.x[i], self.y[i], self.x1[i], self.x2[i], self.angle[i]
                     )
 
                     # bounding box for the lobe
@@ -1277,7 +1295,7 @@ class MrLavaLoba:
                     # change 2022/01/13
                     # FROM HERE
                     Ztot[j_bottom:j_top, i_left:i_right] += (
-                        filling_parameter[j_bottom:j_top, i_left:i_right]
+                        self.filling_parameter[j_bottom:j_top, i_left:i_right]
                         * lobe_thickness
                         * Zflow_local
                     )
@@ -1444,14 +1462,12 @@ class MrLavaLoba:
                 """
 
                 # compute the lobe (input.npoints on the ellipse)
-                [xe, ye] = ellipse(
+                [xe, ye] = self.ellipse(
                     self.x[idx],
                     self.y[idx],
                     self.x1[idx],
                     self.x2[idx],
                     self.angle[idx],
-                    X_circle,
-                    Y_circle,
                 )
 
                 # For all the points of the ellipse compute the indexes of the pixel
@@ -1573,14 +1589,16 @@ class MrLavaLoba:
                     # print('cos_angle1,sin_angle1',cos_angle1,sin_angle1)
 
                     x_avg2 = xi_fract * (
-                        yi_fract * vx[iy1, ix1] + (1.0 - yi_fract) * vx[iy, ix1]
+                        yi_fract * self.vx[iy1, ix1]
+                        + (1.0 - yi_fract) * self.vx[iy, ix1]
                     ) + (1.0 - xi_fract) * (
-                        yi_fract * vx[iy1, ix] + (1.0 - yi_fract) * vx[iy, ix]
+                        yi_fract * self.vx[iy1, ix] + (1.0 - yi_fract) * self.vx[iy, ix]
                     )
                     y_avg2 = xi_fract * (
-                        yi_fract * vy[iy1, ix1] + (1.0 - yi_fract) * vy[iy, ix1]
+                        yi_fract * self.vy[iy1, ix1]
+                        + (1.0 - yi_fract) * self.vy[iy, ix1]
                     ) + (1.0 - xi_fract) * (
-                        yi_fract * vy[iy1, ix] + (1.0 - yi_fract) * vy[iy, ix]
+                        yi_fract * self.vy[iy1, ix] + (1.0 - yi_fract) * self.vy[iy, ix]
                     )
 
                     if x_avg2**2 + y_avg2**2 > 0.0:
@@ -1590,11 +1608,11 @@ class MrLavaLoba:
                         # print('cos_angle2,sin_angle2',cos_angle2,sin_angle2)
 
                         distxyidx = xi_fract * (
-                            yi_fract * distxy[iy1, ix1]
-                            + (1.0 - yi_fract) * distxy[iy, ix1]
+                            yi_fract * self.distxy[iy1, ix1]
+                            + (1.0 - yi_fract) * self.distxy[iy, ix1]
                         ) + (1.0 - xi_fract) * (
-                            yi_fract * distxy[iy1, ix]
-                            + (1.0 - yi_fract) * distxy[iy, ix]
+                            yi_fract * self.distxy[iy1, ix]
+                            + (1.0 - yi_fract) * self.distxy[iy, ix]
                         )
 
                         x_avg = (
@@ -1730,14 +1748,8 @@ class MrLavaLoba:
                 # check the grid points covered by the lobe
                 if input.saveraster_flag == 1:
                     # compute the new lobe
-                    [xe, ye] = ellipse(
-                        self.x[i],
-                        self.y[i],
-                        self.x1[i],
-                        self.x2[i],
-                        self.angle[i],
-                        X_circle,
-                        Y_circle,
+                    [xe, ye] = self.ellipse(
+                        self.x[i], self.y[i], self.x1[i], self.x2[i], self.angle[i]
                     )
 
                     # bounding box for the new lobe
@@ -1821,7 +1833,7 @@ class MrLavaLoba:
                     # change 2022/01/13
 
                     Ztot[j_bottom:j_top, i_left:i_right] += (
-                        filling_parameter[j_bottom:j_top, i_left:i_right]
+                        self.filling_parameter[j_bottom:j_top, i_left:i_right]
                         * lobe_thickness
                         * Zflow_local
                     )
