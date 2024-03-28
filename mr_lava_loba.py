@@ -1,7 +1,3 @@
-# from mpl_toolkits.mplot3d import Axes3D
-from matplotlib import cm
-from matplotlib.ticker import LinearLocator, FormatStrFormatter
-import matplotlib.pyplot as plt
 import numpy as np
 from linecache import getline
 #from scipy.stats import beta
@@ -74,6 +70,7 @@ class Input:
     start_from_dist_flag: int = 0
     force_max_length: int = 0
     max_length: float = 0
+    n_check_loop: int = 0
     restart_files: Optional[List[str]] = None
     restart_filling_parameters: Optional[List[float]] = None
 
@@ -113,6 +110,7 @@ def parse_input() -> Input:
     input.start_from_dist_flag = input_data_advanced.start_from_dist_flag
     input.force_max_length = input_data_advanced.force_max_length
     input.max_length = input_data_advanced.max_length
+    input.n_check_loop = input_data_advanced.n_check_loop
 
     try:
         input.fissure_probabilities = input_data.fissure_probabilities
@@ -582,7 +580,6 @@ class MrLavaLoba:
         print("max_cells", self.max_cells)
 
     def check_channel_file(self):
-
         import shapefile
         from shapely.geometry import Point, LineString, MultiPoint
         from shapely.ops import nearest_points
@@ -844,6 +841,22 @@ class MrLavaLoba:
             Zc = Zc + (Zflow_old * filling_parameter_i)
             print("Restart file read")
 
+    def print_status(self, flow, est_rem_time):
+        input = self.input
+
+        if input.n_flows > 1 and not ("SLURM_JOB_NAME" in os.environ.keys()):
+            # print on screen bar with percentage of flows computed
+            last_percentage_5 = np.rint(flow * 20.0 / (input.n_flows)).astype(int)
+            last_percentage = np.rint(flow * 100.0 / (input.n_flows))
+            last_percentage = np.rint(flow * 100.0 / (input.n_flows))
+            last_percentage = last_percentage.astype(int)
+            sys.stdout.write("\r")
+            sys.stdout.write(
+                "[%-20s] %d%% %s"
+                % ("=" * (last_percentage_5), last_percentage, est_rem_time)
+            )
+            sys.stdout.flush()
+
     def run(self):
         input = self.input
 
@@ -906,8 +919,7 @@ class MrLavaLoba:
 
         Zdist = np.zeros((asc_file.ny, asc_file.nx), dtype=int) + 9999
 
-        print("End pre-processing")
-        print("")
+        print("End pre-processing\n")
 
         if sys.version_info >= (3, 0):
             start = time.process_time()
@@ -924,7 +936,7 @@ class MrLavaLoba:
             )
             descendents = np.zeros(self.alloc_n_lobes, dtype=int)
 
-            i_first_check = n_check_loop
+            i_first_check = input.n_check_loop
 
             if (input.a_beta == 0) and (input.b_beta == 0):
                 # DEFINE THE NUMBER OF LOBES OF THE FLOW (RANDOM VALUE BETWEEN
@@ -946,7 +958,7 @@ class MrLavaLoba:
                     )
                 )
 
-            n_lobes_tot = n_lobes_tot + n_lobes
+            n_lobes_tot += n_lobes
 
             thickness_min = (
                 2.0
@@ -958,22 +970,7 @@ class MrLavaLoba:
                 2.0 * (self.avg_lobe_thickness - thickness_min) / (n_lobes - 1.0)
             )
 
-            # print ('n_lobes',n_lobes)
-            # print ('thickness_min',thickness_min)
-            # print ('delta_lobe_thickness',delta_lobe_thickness)
-
-            if input.n_flows > 1 and not ("SLURM_JOB_NAME" in os.environ.keys()):
-                # print on screen bar with percentage of flows computed
-                last_percentage_5 = np.rint(flow * 20.0 / (input.n_flows)).astype(int)
-                last_percentage = np.rint(flow * 100.0 / (input.n_flows))
-                last_percentage = np.rint(flow * 100.0 / (input.n_flows))
-                last_percentage = last_percentage.astype(int)
-                sys.stdout.write("\r")
-                sys.stdout.write(
-                    "[%-20s] %d%% %s"
-                    % ("=" * (last_percentage_5), last_percentage, est_rem_time)
-                )
-                sys.stdout.flush()
+            self.print_status(flow, est_rem_time)
 
             for i in range(0, input.n_init):
                 if input.n_flows == 1 and not ("SLURM_JOB_NAME" in os.environ.keys()):
@@ -1566,7 +1563,6 @@ class MrLavaLoba:
                 new_angle = angle_avg
 
                 if not input.alfa_channel is None and input.alfa_channel > 0.0:
-
                     old_angle = new_angle
 
                     # interpolate the vector at the corners of the pixel to find the
@@ -1874,8 +1870,12 @@ class MrLavaLoba:
                         i_left_int = np.maximum(i_left, ileft_array[self.parent[i]])
                         i_right_int = np.minimum(i_right, iright_array[self.parent[i]])
 
-                        Zlocal_new = np.zeros((self.max_cells, self.max_cells), dtype=int)
-                        Zlocal_parent = np.zeros((self.max_cells, self.max_cells), dtype=int)
+                        Zlocal_new = np.zeros(
+                            (self.max_cells, self.max_cells), dtype=int
+                        )
+                        Zlocal_parent = np.zeros(
+                            (self.max_cells, self.max_cells), dtype=int
+                        )
 
                         Zlocal_parent = Zflow_local_array[
                             self.parent[i],
