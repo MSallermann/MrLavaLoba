@@ -23,7 +23,7 @@ from os.path import exists
 import gc
 import pandas as pd
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, List
 
 
@@ -32,8 +32,8 @@ class Input:
     # from input
     run_name: str = ""
     source: str = ""
-    x_vent: int = 0
-    y_vent: int = 0
+    x_vent: List[float] = field(default_factory=list)
+    y_vent: List[float] = field(default_factory=list)
     hazard_flag: int = 0
     masking_threshold: float = 0
     n_flows: int = 0
