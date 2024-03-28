@@ -24,6 +24,7 @@ import gc
 import pandas as pd
 
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -46,6 +47,13 @@ class Input:
     thickness_ratio: float = 0
     fixed_dimension_flag: int = 0
     vent_flag: int = 0
+    fissure_probabilities: Optional[float] = None
+    total_volume: Optional[float] = None
+    volume_flag: Optional[int] = None
+    east_to_vent: Optional[float] = 0
+    west_to_vent: Optional[float] = 0
+    south_to_vent: Optional[float] = 0
+    north_to_vent: Optional[float] = 0
 
     # from input_advanced
     npoints: int = 0
@@ -98,7 +106,184 @@ def parse_input() -> Input:
     input.force_max_length = input_data_advanced.force_max_length
     input.max_length = input_data_advanced.max_length
 
+    try:
+        input.fissure_probabilities = input_data.fissure_probabilities
+    except AttributeError:
+        input.fissure_probabilities = None
+
+    try:
+        input.volume_flag = input_data.volume_flag
+    except AttributeError:
+        input.volume_flag = None
+
+    try:
+        input.total_volume = input_data.total_volume
+    except AttributeError:
+        input.total_volume = None
+
+    try:
+        input.west_to_vent = input_data.west_to_vent
+    except AttributeError:
+        input.west_to_vent = None
+
+    try:
+        input.east_to_vent = input_data.east_to_vent
+    except AttributeError:
+        input.east_to_vent = None
+
+    try:
+        input.south_to_vent = input_data.south_to_vent
+    except AttributeError:
+        input.south_to_vent = None
+
+    try:
+        input.north_to_vent = input_data.north_to_vent
+    except AttributeError:
+        input.north_to_vent = None
+
     return input
+
+
+@dataclass
+class AscFile:
+    cols: int = 0
+    rows: int = 0
+    lx: float = 0
+    ly: float = 0
+    cell: float = 0
+    nd: float = -9999
+    arr = np.array([], dtype=float)
+    crop_flag: bool = False
+    nx: int = 0
+    ny: int = 0
+    Xc = np.array([], dtype=float)
+    Yc = np.array([], dtype=float)
+    Zc = np.array([], dtype=float)
+
+
+def read_asc_file(input: Input):
+    # Parse the header using a loop and
+    # the built-in linecache module
+    asc_file = AscFile()
+    hdr = [getline(input.source, i) for i in range(1, 7)]
+
+    values = [float(h.split(" ")[-1].strip()) for h in hdr]
+    del hdr
+
+    cols, rows, asc_file.lx, asc_file.ly, asc_file.cell, asc_file.nd = values
+    # del values
+
+    asc_file.cols = int(cols)
+    asc_file.rows = int(rows)
+
+    crop_flag = (
+        (input.west_to_vent is None)
+        and (input.east_to_vent is None)
+        and (input.south_to_vent is None)
+        and (input.north_to_vent is None)
+    )
+
+    print("west_to_vent", input.west_to_vent)
+    print("input.x_vent", input.x_vent)
+    print("Crop flag = ", crop_flag)
+
+    if sys.version_info >= (3, 0):
+        start = time.process_time()
+    else:
+        start = time.clock()
+
+    source_npy = input.source.replace(".asc", ".npy")
+
+    if os.path.isfile(source_npy):
+        print(source_npy, " exists")
+    else:
+        print(source_npy, " does not exist")
+        data = np.loadtxt(input.source, skiprows=6)
+        np.save(source_npy, data)
+        del data
+
+    if crop_flag:
+        # Load the dem into a numpy array
+        arr_temp = np.flipud(np.load(input.source_npy))
+
+        # the values are associated to the center of the pixels
+        xc_temp = lx + asc_file.cell * (0.5 + np.arange(0, arr_temp.shape[1]))
+        yc_temp = ly + asc_file.cell * (0.5 + np.arange(0, arr_temp.shape[0]))
+
+        xW = np.min(input.x_vent) - input.west_to_vent
+        xE = np.max(input.x_vent) + input.east_to_vent
+        yS = np.min(input.y_vent) - input.south_to_vent
+        yN = np.max(input.y_vent) + input.north_to_vent
+
+        # crop the DEM to the desired domain
+        iW = np.maximum(0, (np.floor((xW - lx) / asc_file.cell)).astype(int))
+        iE = np.minimum(cols, (np.ceil((xE - lx) / asc_file.cell)).astype(int))
+        jS = np.maximum(0, (np.floor((yS - ly) / asc_file.cell)).astype(int))
+        jN = np.minimum(rows, (np.ceil((yN - ly) / asc_file.cell)).astype(int))
+
+        print("Cropping of original DEM")
+        print("xW,xE,yS,yN", xW, xE, yS, yN)
+        print("iW,iE,jS,jN", iW, iE, jS, jN)
+        print("")
+
+        arr = arr_temp[jS:jN, iW:iE]
+        xc = xc_temp[iW:iE]
+        yc = yc_temp[jS:jN]
+
+        lx = xc[0] - 0.5 * asc_file.cell
+        ly = yc[0] - 0.5 * asc_file.cell
+
+        asc_file.nx = arr.shape[1]
+        asc_file.ny = arr.shape[0]
+
+        header = "ncols     %s\n" % arr.shape[1]
+        header += "nrows    %s\n" % arr.shape[0]
+        header += "xllcorner " + str(lx) + "\n"
+        header += "yllcorner " + str(ly) + "\n"
+        header += "asc_file.cellsize " + str(asc_file.cell) + "\n"
+        header += "NODATA_value " + str(asc_file.nd) + "\n"
+
+        output_DEM = input.run_name + "_DEM.asc"
+
+        np.savetxt(output_DEM, np.flipud(arr), header=header, fmt="%1.5f", comments="")
+
+        del arr_temp
+        del xc_temp
+        del yc_temp
+        gc.collect()
+
+    else:
+        # Load the dem into a numpy array
+        arr = np.flipud(np.load(source_npy))
+
+        asc_file.nx = arr.shape[1]
+        asc_file.ny = arr.shape[0]
+
+        # the values are associated to the center of the pixels
+        xc = asc_file.lx + asc_file.cell * (0.5 + np.arange(0, asc_file.nx))
+        yc = asc_file.ly + asc_file.cell * (0.5 + np.arange(0, asc_file.ny))
+
+    gc.collect()
+
+    if sys.version_info >= (3, 0):
+        elapsed = time.process_time() - start
+    else:
+        elapsed = time.clock() - start
+
+    print("Time to read DEM " + str(elapsed) + "s")
+
+    xcmin = np.min(xc)
+    xcmax = np.max(xc)
+
+    ycmin = np.min(yc)
+    ycmax = np.max(yc)
+
+    asc_file.Xc, asc_file.Yc = np.meshgrid(xc, yc)
+
+    asc_file.Zc = np.zeros((asc_file.ny, asc_file.nx))
+    np.copyto(asc_file.Zc, arr)
+
+    return asc_file
 
 
 def interp2Dgrids(xin, yin, Zin, Xout, Yout):
@@ -119,19 +304,15 @@ def interp2Dgrids(xin, yin, Zin, Xout, Yout):
     cellin = xin[1] - xin[0]
 
     if Xout.ndim == 2:
-
         xout = Xout[0, :]
 
     else:
-
         xout = Xout
 
     if Yout.ndim == 2:
-
         yout = Yout[:, 0]
 
     else:
-
         yout = Yout
 
     # Search for the cell containing the center of the parent lobe
@@ -164,8 +345,18 @@ def interp2Dgrids(xin, yin, Zin, Xout, Yout):
         + (1.0 - xi_fract - yi_fract + xi_out_yi) * Zin[np.ix_(iy, ix)]
     )
 
-    x2 = xc - ax2 * sin_angle
-    y2 = yc + ax2 * cos_angle
+    return Zout
+
+
+def ellipse(xc, yc, ax1, ax2, angle, X_circle, Y_circle):
+    cos_angle = np.cos(angle * np.pi / 180)
+    sin_angle = np.sin(angle * np.pi / 180)
+
+    # x1 = xc + ax1 * cos_angle
+    # y1 = yc + ax1 * sin_angle
+
+    # x2 = xc - ax2 * sin_angle
+    # y2 = yc + ax2 * cos_angle
 
     X = ax1 * X_circle
     Y = ax2 * Y_circle
@@ -176,8 +367,9 @@ def interp2Dgrids(xin, yin, Zin, Xout, Yout):
     return (xe,ye)
 
 def local_intersection(Xc_local, Yc_local, xc_e, yc_e, ax1, ax2, angle, xv, yv, nv2):
-
-def inellipse( xs,ys,xc_e,yc_e,ax1,ax2,c,s):
+    # the accuracy of this procedure depends on the resolution of xv and yv
+    # representing a grid of points [-0.5*cell;0.5*cell] X [-0.5*cell;0.5*cell]
+    # built around the centers
 
     x = xs-xc_e
     y = ys-yc_e
@@ -230,16 +422,11 @@ def local_intersection(Xs_local,Ys_local,xc_e,yc_e,ax1,ax2,angle,xv,yv,nv2):
 
     return area_fract
 
-# Main start here
-
 
 def main(input: Input):
-    print("")
-    print("Mr Lava Loba by M.de' Michieli Vitturi and S.Tarquini")
-    print("")
+    print("\nMr Lava Loba by M.de' Michieli Vitturi and S.Tarquini\n")
 
     # read the run parameters form the file inpot_data.py
-
     n_vents = len(input.x_vent)
 
     if (
@@ -247,23 +434,19 @@ def main(input: Input):
         and (len(input.x_vent_end) > 0)
         and (input.vent_flag > 3)
     ):
-
         first_j = 0
         cum_fiss_length = np.zeros(n_vents + 1)
 
     else:
-
         first_j = 1
         cum_fiss_length = np.zeros(n_vents)
 
     for j in range(first_j, n_vents):
-
         if (
             ("input.x_vent_end" in globals())
             and (len(input.x_vent_end) > 0)
             and (input.vent_flag > 3)
         ):
-
             delta_xvent = input.x_vent_end[j] - input.x_vent[j]
             delta_yvent = input.y_vent_end[j] - input.y_vent[j]
 
@@ -272,7 +455,6 @@ def main(input: Input):
             )
 
         else:
-
             delta_xvent = input.x_vent[j] - input.x_vent[j - 1]
             delta_yvent = input.y_vent[j] - input.y_vent[j - 1]
 
@@ -280,28 +462,15 @@ def main(input: Input):
                 delta_xvent**2 + delta_yvent**2
             )
 
-    try:
-
-        from input_data import fissure_probabilities
-
-    except ImportError:
-
-        print("fissure_probabilities not used")
-
-    if "fissure_probabilities" in globals():
-
+    if input.fissure_probabilities is not None:
         if input.vent_flag == 8:
-
-            cum_fiss_length = np.cumsum(fissure_probabilities)
+            cum_fiss_length = np.cumsum(input.fissure_probabilities)
 
         elif input.vent_flag > 5:
-
-            cum_fiss_length[1:] = np.cumsum(fissure_probabilities)
+            cum_fiss_length[1:] = np.cumsum(input.fissure_probabilities)
 
     if n_vents > 1:
         cum_fiss_length = cum_fiss_length.astype(float) / cum_fiss_length[-1]
-
-    # print(cum_fiss_length)
 
     # search if another run with the same base name already exists
     i = 0
@@ -311,7 +480,6 @@ def main(input: Input):
     base_name = input.run_name
 
     while condition:
-
         input.run_name = base_name + "_{0:03}".format(i)
 
         backup_advanced_file = input.run_name + "_advanced_inp.bak"
@@ -329,11 +497,9 @@ def main(input: Input):
     print("")
 
     if (input.a_beta == 0) and (input.b_beta == 0):
-
         alloc_n_lobes = int(input.max_n_lobes)
 
     else:
-
         x_beta = np.rint(range(0, input.n_flows)) / (input.n_flows - 1)
 
         beta_pdf = beta.pdf(x_beta, input.a_beta, input.b_beta)
@@ -362,29 +528,12 @@ def main(input: Input):
     parent = np.zeros(alloc_n_lobes, dtype=int)
     alfa_inertial = np.zeros(alloc_n_lobes)
 
-    try:
-
-        from input_data import volume_flag
-
-    except ImportError:
-
-        print("volume_flag non specified in input")
-        sys.exit()
-
-    if volume_flag == 1:
-
-        try:
-
-            from input_data import total_volume
-
-        except ImportError:
-
-            print("total_volume needed")
-            sys.exit()
+    if input.volume_flag == 1:
+        if input.total_volume is None:
+            raise Exception("Total volume flag not set")
 
         if input.fixed_dimension_flag == 1:
-
-            avg_lobe_thickness = total_volume / (
+            avg_lobe_thickness = input.total_volume / (
                 input.n_flows
                 * input.lobe_area
                 * 0.5
@@ -393,8 +542,7 @@ def main(input: Input):
             sys.stdout.write("Average Lobe thickness = %f m\n\n" % (avg_lobe_thickness))
 
         elif input.fixed_dimension_flag == 2:
-
-            input.lobe_area = total_volume / (
+            input.lobe_area = input.total_volume / (
                 input.n_flows
                 * avg_lobe_thickness
                 * 0.5
@@ -410,165 +558,11 @@ def main(input: Input):
     t = np.linspace(0.0, 2.0 * np.pi, input.npoints)
     X_circle = np.cos(t)
     Y_circle = np.sin(t)
-
-    # Parse the header using a loop and
-    # the built-in linecache module
-    hdr = [getline(input.source, i) for i in range(1, 7)]
-
-    values = [float(h.split(" ")[-1].strip()) for h in hdr]
-    del hdr
-
-    cols, rows, lx, ly, cell, nd = values
-    # del values
-
-    cols = int(cols)
-    rows = int(rows)
-
-    try:
-
-        from input_data import west_to_vent
-
-    except ImportError:
-
-        print("west_to_vent not defined in input file")
-
-    try:
-
-        from input_data import east_to_vent
-
-    except ImportError:
-
-        print("east_to_vent not defined in input file")
-
-    try:
-
-        from input_data import south_to_vent
-
-    except ImportError:
-
-        print("south_to_vent not defined in input file")
-
-    try:
-
-        from input_data import north_to_vent
-
-    except ImportError:
-
-        print("north_to_vent not defined in input file")
-
-    crop_flag = (
-        ("west_to_vent" in locals())
-        and ("east_to_vent" in locals())
-        and ("south_to_vent" in locals())
-        and ("north_to_vent" in locals())
-    )
-
-    print("west_to_vent", west_to_vent)
-    print("input.x_vent", input.x_vent)
-    print("Crop flag = ", crop_flag)
-
-    if sys.version_info >= (3, 0):
-        start = time.process_time()
-    else:
-        start = time.clock()
-
-    input.source_npy = input.source.replace(".asc", ".npy")
-
-    if os.path.isfile(input.source_npy):
-        print(input.source_npy, " exists")
-    else:
-        print(input.source_npy, " does not exist")
-        data = np.loadtxt(input.source, skiprows=6)
-        np.save(input.source_npy, data)
-        del data
-
-    if crop_flag:
-
-        # Load the dem into a numpy array
-        arr_temp = np.flipud(np.load(input.source_npy))
-
-        # the values are associated to the center of the pixels
-        xc_temp = lx + cell * (0.5 + np.arange(0, arr_temp.shape[1]))
-        yc_temp = ly + cell * (0.5 + np.arange(0, arr_temp.shape[0]))
-
-        xW = np.min(input.x_vent) - west_to_vent
-        xE = np.max(input.x_vent) + east_to_vent
-        yS = np.min(input.y_vent) - south_to_vent
-        yN = np.max(input.y_vent) + north_to_vent
-
-        # crop the DEM to the desired domain
-        iW = np.maximum(0, (np.floor((xW - lx) / cell)).astype(int))
-        iE = np.minimum(cols, (np.ceil((xE - lx) / cell)).astype(int))
-        jS = np.maximum(0, (np.floor((yS - ly) / cell)).astype(int))
-        jN = np.minimum(rows, (np.ceil((yN - ly) / cell)).astype(int))
-
-        print("Cropping of original DEM")
-        print("xW,xE,yS,yN", xW, xE, yS, yN)
-        print("iW,iE,jS,jN", iW, iE, jS, jN)
-        print("")
-
-        arr = arr_temp[jS:jN, iW:iE]
-        xc = xc_temp[iW:iE]
-        yc = yc_temp[jS:jN]
-
-        lx = xc[0] - 0.5 * cell
-        ly = yc[0] - 0.5 * cell
-
-        nx = arr.shape[1]
-        ny = arr.shape[0]
-
-        header = "ncols     %s\n" % arr.shape[1]
-        header += "nrows    %s\n" % arr.shape[0]
-        header += "xllcorner " + str(lx) + "\n"
-        header += "yllcorner " + str(ly) + "\n"
-        header += "cellsize " + str(cell) + "\n"
-        header += "NODATA_value " + str(nd) + "\n"
-
-        output_DEM = input.run_name + "_DEM.asc"
-
-        np.savetxt(output_DEM, np.flipud(arr), header=header, fmt="%1.5f", comments="")
-
-        del arr_temp
-        del xc_temp
-        del yc_temp
-        gc.collect()
-
-    else:
-
-        # Load the dem into a numpy array
-        arr = np.flipud(np.load(input.source_npy))
-
-        nx = arr.shape[1]
-        ny = arr.shape[0]
-
-        # the values are associated to the center of the pixels
-        xc = lx + cell * (0.5 + np.arange(0, nx))
-        yc = ly + cell * (0.5 + np.arange(0, ny))
-
-    gc.collect()
-
-    if sys.version_info >= (3, 0):
-        elapsed = time.process_time() - start
-    else:
-        elapsed = time.clock() - start
-
-    print("Time to read DEM " + str(elapsed) + "s")
-
-    xcmin = np.min(xc)
-    xcmax = np.max(xc)
-
-    ycmin = np.min(yc)
-    ycmax = np.max(yc)
-
-    Xc, Yc = np.meshgrid(xc, yc)
-
-    Zc = np.zeros((ny, nx))
-    np.copyto(Zc, arr)
-
+    # HERERERER
+    asc_file = read_asc_file(input)
     filling_parameter = (1.0 - input.thickening_parameter) * np.ones_like(Zc)
 
     try:
-
         from input_data import channel_file
         from input_data import alfa_channel
         from input_data import d1
@@ -578,7 +572,6 @@ def main(input: Input):
         check_channel_file = exists(channel_file)
 
     except ImportError:
-
         print("Channel parameters not defined:")
         print("- channel_file")
         print("- d1")
@@ -590,7 +583,6 @@ def main(input: Input):
         alfa_channel = 0.0
 
     if check_channel_file:
-
         import shapefile
         from shapely.geometry import Point, LineString, MultiPoint
         from shapely.ops import nearest_points
@@ -707,9 +699,7 @@ def main(input: Input):
         # print(ciao)
 
         for idx, valx in enumerate(xgrid):
-
             for idy, valy in enumerate(ygrid):
-
                 pt = Point(valx, valy)
 
                 p1, p2 = nearest_points(ln, pt)
@@ -722,7 +712,6 @@ def main(input: Input):
 
                 dist = []
                 for i in range(len(points) - 1):
-
                     dist.append(
                         np.maximum(eps, pt.distance(LineString(points[i : i + 2])))
                     )
@@ -764,7 +753,6 @@ def main(input: Input):
         print("")
 
     try:
-
         from input_data_advanced import restart_files
         from input_data_advanced import restart_filling_parameters
 
@@ -772,14 +760,12 @@ def main(input: Input):
         n_restarts = len(restart_files)
 
     except ImportError:
-
         print("")
         print("Restart_files not used")
         n_restarts = 0
 
     # load restart files (if existing)
     for i_restart in range(0, n_restarts):
-
         print("Read restart file ", restart_files[i_restart])
         Zflow_old = np.zeros((ny, nx))
 
@@ -800,7 +786,6 @@ def main(input: Input):
         cols_re, rows_re, lx_re, ly_re, cell_re, nd_re = values_restart
 
         if values[0:5] != values_restart[0:5]:
-
             print("Check on restart size failed")
 
             print(values[0:5])
@@ -808,12 +793,10 @@ def main(input: Input):
             sys.exit(0)
 
         else:
-
             print("Check on restart size OK")
 
         # Load the previous flow thickness into a numpy array
         if crop_flag:
-
             specific_rows = list(np.arange(6 + rows_re - jN)) + list(
                 np.arange(6 + rows_re - jS, 6 + rows_re)
             )
@@ -831,7 +814,6 @@ def main(input: Input):
             arr = np.flipud(arr)
 
         else:
-
             arr_df = pd.read_csv(
                 input.source,
                 delimiter=" ",
@@ -856,8 +838,8 @@ def main(input: Input):
     # Define a small grid for lobe-cells intersection
     nv = 15
     xv, yv = np.meshgrid(
-        np.linspace(-0.5 * cell, 0.5 * cell, nv),
-        np.linspace(-0.5 * cell, 0.5 * cell, nv),
+        np.linspace(-0.5 * asc_file.cell, 0.5 * asc_file.cell, nv),
+        np.linspace(-0.5 * asc_file.cell, 0.5 * asc_file.cell, nv),
     )
     xv = np.reshape(xv, -1)
     yv = np.reshape(yv, -1)
@@ -901,14 +883,12 @@ def main(input: Input):
     n_lobes_tot = 0
 
     for flow in range(0, input.n_flows):
-
         Zflow_local_array = np.zeros((alloc_n_lobes, max_cells, max_cells), dtype=int)
         descendents = np.zeros(alloc_n_lobes, dtype=int)
 
         i_first_check = n_check_loop
 
         if (input.a_beta == 0) and (input.b_beta == 0):
-
             # DEFINE THE NUMBER OF LOBES OF THE FLOW (RANDOM VALUE BETWEEN
             # MIN AND MAX)
             n_lobes = int(
@@ -916,7 +896,6 @@ def main(input: Input):
             )
 
         else:
-
             x_beta = (1.0 * flow) / (input.n_flows - 1)
             n_lobes = int(
                 np.rint(
@@ -957,7 +936,6 @@ def main(input: Input):
             sys.stdout.flush()
 
         for i in range(0, input.n_init):
-
             if input.n_flows == 1 and not ("SLURM_JOB_NAME" in os.environ.keys()):
                 # print on screen bar with percentage of flows computed
                 last_percentage = np.rint(i * 20.0 / (n_lobes - 1)) * 5
@@ -974,14 +952,11 @@ def main(input: Input):
             # STEP 0: COMPUTE THE FIRST LOBES OF EACH FLOW
 
             if n_vents == 1:
-
                 x[i] = input.x_vent[0]
                 y[i] = input.y_vent[0]
 
             else:
-
                 if input.vent_flag == 0:
-
                     # input.vent_flag = 0  => the initial lobes are on the vents
                     #                   coordinates and the flows start initially
                     #                   from the first vent, then from the second
@@ -993,7 +968,6 @@ def main(input: Input):
                     y[i] = input.y_vent[i_vent]
 
                 elif input.vent_flag == 1:
-
                     # input.vent_flag = 1  => the initial lobes are chosen randomly from
                     #                   the vents coordinates and each vent has the
                     #                   same probability
@@ -1004,7 +978,6 @@ def main(input: Input):
                     y[i] = input.y_vent[int(i_vent)]
 
                 elif (input.vent_flag == 2) or (input.vent_flag == 6):
-
                     # input.vent_flag = 2  => the initial lobes are on the polyline
                     #                   connecting the vents and all the point of
                     #                   the polyline have the same probability
@@ -1036,7 +1009,6 @@ def main(input: Input):
                     )
 
                 elif input.vent_flag == 3:
-
                     # input.vent_flag = 3  => the initial lobes are on the polyline
                     #                   connecting the vents and all the segments
                     #                   of the polyline have the same probability
@@ -1056,7 +1028,6 @@ def main(input: Input):
                     )
 
                 elif (input.vent_flag == 4) or (input.vent_flag == 7):
-
                     # input.vent_flag = 4  => the initial lobes are on multiple
                     #                   fissures and all the point of the fissures
                     #                   have the same probability
@@ -1090,7 +1061,6 @@ def main(input: Input):
                     )
 
                 elif input.vent_flag == 5:
-
                     # input.vent_flag = 5  => the initial lobes are on multiple
                     #                   fissures and all the fissures
                     #                   have the same probability
@@ -1110,7 +1080,6 @@ def main(input: Input):
                     )
 
                 elif input.vent_flag == 8:
-
                     # input.vent_flag = 1  => the initial lobes are chosen randomly from
                     #                   the vents coordinates and each vent has
                     #                   the same probability
@@ -1170,7 +1139,6 @@ def main(input: Input):
             # this expression define a coefficient used for the direction of the
             # next slope
             if input.max_slope_prob < 1:
-
                 # angle defining the direction of the new slope. when slope=0, then
                 # we have an uniform distribution for the possible angles for the
                 # next lobe.
@@ -1178,7 +1146,6 @@ def main(input: Input):
                 slopedeg = 180.0 * np.arctan(slope) / np.pi
 
                 if (slopedeg > 0.0) and (input.max_slope_prob > 0):
-
                     sigma = (
                         (1.0 - input.max_slope_prob)
                         / input.max_slope_prob
@@ -1188,14 +1155,12 @@ def main(input: Input):
                     rand_angle_new = rtnorm.rtnorm(-180, 180, 0, sigma)
 
                 else:
-
                     rand = np.random.uniform(0, 1, size=1)
                     rand_angle_new = 360.0 * np.abs(rand - 0.5)
 
                 angle[i] = max_slope_angle + rand_angle_new
 
             else:
-
                 angle[i] = max_slope_angle
 
             # factor for the lobe eccentricity
@@ -1210,7 +1175,6 @@ def main(input: Input):
             x2[i] = np.sqrt(input.lobe_area / np.pi) / np.sqrt(aspect_ratio)
 
             if input.saveraster_flag == 1:
-
                 # compute the points of the lobe
                 [xe, ye] = ellipse(
                     x[i], y[i], x1[i], x2[i], angle[i], X_circle, Y_circle
@@ -1294,16 +1258,14 @@ def main(input: Input):
                 ileft_array[i] = i_left
 
                 if input.hazard_flag:
-
                     # store the local array of integer coverage in the global array
-                    Zflow_local_array[i, 0 : j_top - j_bottom, 0 : i_right - i_left] = (
-                        Zflow_local_int
-                    )
+                    Zflow_local_array[
+                        i, 0 : j_top - j_bottom, 0 : i_right - i_left
+                    ] = Zflow_local_int
 
         last_lobe = n_lobes
 
         for i in range(input.n_init, n_lobes):
-
             # print('i',i)
 
             if input.n_flows == 1 and "SLURM_JOB_NAME" not in os.environ.keys():
@@ -1318,13 +1280,11 @@ def main(input: Input):
             # STEP 0: DEFINE THE INDEX idx OF THE PARENT LOBE
 
             if input.lobe_exponent > 0:
-
                 idx0 = np.random.uniform(0, 1, size=1)
 
                 idx1 = idx0**input.lobe_exponent
 
                 if input.force_max_length:
-
                     # the parent lobe is chosen only among those with
                     # dist smaller than the maximum value fixed in input
                     mask = dist_int[0:i] < input.max_length
@@ -1340,7 +1300,6 @@ def main(input: Input):
                     idx = sorted_dist[idx]
 
                 else:
-
                     # the parent lobe is chosen among all the lobes
 
                     idx2 = i * idx1
@@ -1350,7 +1309,6 @@ def main(input: Input):
                     idx = int(idx3)
 
                 if input.start_from_dist_flag:
-
                     # the probability law is associated to the distance
                     # from the vent
                     sorted_dist = np.argsort(dist_int[0:i])
@@ -1358,7 +1316,6 @@ def main(input: Input):
                     idx = sorted_dist[idx]
 
             else:
-
                 idx = i - 1
 
             # save the index of the parent and the distance from first lobe of the
@@ -1371,7 +1328,6 @@ def main(input: Input):
             last = i
 
             for j in range(0, dist_int[idx] + 1):
-
                 previous = parent[last]
                 descendents[previous] = descendents[previous] + 1
                 last = previous
@@ -1410,7 +1366,6 @@ def main(input: Input):
                 or (Zc[iy, ix1] == nd)
                 or (Zc[iy1, ix] == nd)
             ):
-
                 last_lobe = i - 1
                 break
 
@@ -1502,7 +1457,6 @@ def main(input: Input):
             # this expression define a coefficient used for the direction of the
             # next slope
             if input.max_slope_prob < 1:
-
                 # angle defining the direction of the new slope. when slope=0, then
                 # we have an uniform distribution for the possible angles for the
                 # next lobe.
@@ -1510,7 +1464,6 @@ def main(input: Input):
                 slopedeg = 180.0 * np.arctan(slope) / np.pi
 
                 if (slopedeg > 0.0) and (input.max_slope_prob > 0.0):
-
                     sigma = (
                         (1.0 - input.max_slope_prob)
                         / input.max_slope_prob
@@ -1520,14 +1473,12 @@ def main(input: Input):
                     rand_angle_new = rtnorm.rtnorm(-180.0, 180.0, 0.0, sigma)
 
                 else:
-
                     rand = np.random.uniform(0, 1, size=1)
                     rand_angle_new = 360.0 * np.abs(rand - 0.5)
 
                 new_angle = max_slope_angle + rand_angle_new[0]
 
             else:
-
                 new_angle = max_slope_angle
 
             # STEP 3: ADD THE EFFECT OF INERTIA
@@ -1541,11 +1492,9 @@ def main(input: Input):
             sin_angle2 = np.sin(new_angle * deg2rad)
 
             if input.inertial_exponent == 0:
-
                 alfa_inertial[i] = 0.0
 
             else:
-
                 alfa_inertial[i] = (
                     1.0 - (2.0 * np.arctan(slope) / np.pi) ** input.inertial_exponent
                 ) ** (1.0 / input.inertial_exponent)
@@ -1562,7 +1511,6 @@ def main(input: Input):
             new_angle = angle_avg
 
             if alfa_channel > 0.0:
-
                 old_angle = new_angle
 
                 # interpolate the vector at the corners of the pixel to find the
@@ -1584,7 +1532,6 @@ def main(input: Input):
                 )
 
                 if x_avg2**2 + y_avg2**2 > 0.0:
-
                     cos_angle_new = x_avg2 / np.sqrt(x_avg2**2 + y_avg2**2)
                     sin_angle_new = y_avg2 / np.sqrt(x_avg2**2 + y_avg2**2)
 
@@ -1618,13 +1565,11 @@ def main(input: Input):
             # definind the direction of the new lobe, in a coordinate system
             # defined by the semi-axes of the existing lobe
             if np.cos(deg2rad * (new_angle - angle[idx])) > 0:
-
                 xt = np.sqrt(
                     x1[idx] ** 2 * x2[idx] ** 2 / (x2[idx] ** 2 + x1[idx] ** 2 * a**2)
                 )
 
             else:
-
                 xt = -np.sqrt(
                     x1[idx] ** 2 * x2[idx] ** 2 / (x2[idx] ** 2 + x1[idx] ** 2 * a**2)
                 )
@@ -1665,7 +1610,6 @@ def main(input: Input):
                 or (iy <= 0.5 * max_cells)
                 or (iy1 >= ny - 0.5 * max_cells)
             ):
-
                 # print('ix',ix,'iy',iy)
                 last_lobe = i - 1
                 break
@@ -1722,7 +1666,6 @@ def main(input: Input):
 
             # check the grid points covered by the lobe
             if input.saveraster_flag == 1:
-
                 # compute the new lobe
                 [xe, ye] = ellipse(
                     x[i], y[i], x1[i], x2[i], angle[i], X_circle, Y_circle
@@ -1810,40 +1753,34 @@ def main(input: Input):
                 ileft_array[i] = i_left
 
                 if input.hazard_flag:
-
                     # store the local arrays used later for the hazard map
 
                     if not (Zflow_local_int.shape[0] == (j_top - j_bottom)):
-
                         print(Zflow_local_int.shape[0], j_top, j_bottom)
                         print(Zflow_local_int.shape[1], i_right, i_left)
                         print("")
 
                     if not (Zflow_local_int.shape[1] == (i_right - i_left)):
-
                         print(Zflow_local_int.shape[0], j_top, j_bottom)
                         print(Zflow_local_int.shape[1], i_right, i_left)
                         print("")
 
                     if np.max(Zflow_local.shape) > Zflow_local_array.shape[1]:
-
                         print("check 3")
                         print(cell, new_x1, new_x2, new_angle)
                         print(x[i], y[i], x1[i], x2[i])
                         np.set_printoptions(precision=1)
                         print(Zflow_local_int)
 
-                    Zflow_local_array[i, 0 : j_top - j_bottom, 0 : i_right - i_left] = (
-                        Zflow_local_int
-                    )
+                    Zflow_local_array[
+                        i, 0 : j_top - j_bottom, 0 : i_right - i_left
+                    ] = Zflow_local_int
 
         if input.hazard_flag:
-
             # update the hazard map accounting for the number of descendents,
             # representative of the number of times a flow has passed over a cell
 
             for i in range(0, last_lobe):
-
                 j_top = jtop_array[i]
                 j_bottom = jbottom_array[i]
 
@@ -1851,7 +1788,6 @@ def main(input: Input):
                 i_left = ileft_array[i]
 
                 if i > 0:
-
                     j_top_int = np.minimum(j_top, jtop_array[parent[i]])
                     j_bottom_int = np.maximum(j_bottom, jbottom_array[parent[i]])
                     i_left_int = np.maximum(i_left, ileft_array[parent[i]])
@@ -1879,7 +1815,6 @@ def main(input: Input):
                     ]
 
                     if Zlocal_parent.shape[0] == 0 or Zlocal_parent.shape[1] == 0:
-
                         print("check")
                         print("idx", i)
                         print("j", j_bottom, j_top)
@@ -1906,7 +1841,6 @@ def main(input: Input):
                     )
 
                 else:
-
                     Zhazard[j_bottom:j_top, i_left:i_right] += (
                         descendents[i]
                         * Zflow_local_array[
@@ -1976,7 +1910,6 @@ def main(input: Input):
         flag_union_diff = False
 
         try:
-
             from input_data import union_diff_file
 
             # Parse the header using a loop and
@@ -1993,7 +1926,6 @@ def main(input: Input):
                 or (ly_ud != ly)
                 or (cell_ud != cell)
             ):
-
                 print("Union_diff_file", union_diff_file)
                 print("Different header: interpolating data")
 
@@ -2010,7 +1942,6 @@ def main(input: Input):
                 flag_union_diff = True
 
             else:
-
                 flag_union_diff = True
                 Zs1 = Zs_temp
 
@@ -2058,24 +1989,19 @@ def main(input: Input):
             print("--------------------------------")
 
         except ImportError:
-
             print("Union_diff_file not defined")
             flag_union_diff = False
 
         if isinstance(input.masking_threshold, float):
-
             input.masking_threshold = [input.masking_threshold]
 
         n_masking = len(input.masking_threshold)
 
         for i_thr in range(n_masking):
-
             if input.masking_threshold[i_thr] < 1:
-
                 max_lobes = int(np.floor(np.max(Zflow / avg_lobe_thickness)))
 
                 for i in range(1, 10 * max_lobes):
-
                     masked_Zflow = ma.masked_where(
                         Zflow < i * 0.1 * avg_lobe_thickness, Zflow
                     )
@@ -2083,13 +2009,11 @@ def main(input: Input):
                     total_Zflow = np.sum(Zflow)
 
                     if input.flag_threshold == 1:
-
                         volume_fraction = np.sum(masked_Zflow) / total_Zflow
 
                         coverage_fraction = volume_fraction
 
                     else:
-
                         area_fraction = np.true_divide(
                             np.sum(masked_Zflow > 0), np.sum(Zflow > 0)
                         )
@@ -2098,9 +2022,7 @@ def main(input: Input):
                         # print (coverage_fraction)
 
                     if coverage_fraction < input.masking_threshold[i_thr]:
-
                         if input.flag_threshold == 1:
-
                             print("")
                             print("Masking threshold", input.masking_threshold[i_thr])
                             print(
@@ -2128,7 +2050,6 @@ def main(input: Input):
 
                         output_thickness = input.run_name + "_avg_thick.txt"
                         with open(output_thickness, "a") as the_file:
-
                             if i_thr == 0:
                                 the_file.write(
                                     "Average lobe thickness = "
@@ -2194,7 +2115,6 @@ def main(input: Input):
                         break
 
                 if flag_union_diff:
-
                     Zs2 = (1 - masked_Zflow.mask) * Zflow
                     Zs_union = np.maximum(Zs1, Zs2)
 
@@ -2279,7 +2199,6 @@ def main(input: Input):
         """
 
         if input.hazard_flag:
-
             output_haz = input.run_name + "_hazard_full.asc"
 
             np.savetxt(
@@ -2290,26 +2209,21 @@ def main(input: Input):
             print(output_haz + " saved")
 
             for i_thr in range(n_masking):
-
                 if input.masking_threshold[i_thr] < 1:
-
                     max_Zhazard = int(np.floor(np.max(Zhazard)))
 
                     total_Zflow = np.sum(Zflow)
 
                     # for i in range(1,max_Zhazard):
                     for i in np.unique(Zhazard):
-
                         masked_Zflow = ma.masked_where(Zhazard < i, Zflow)
 
                         if input.flag_threshold == 1:
-
                             volume_fraction = np.sum(masked_Zflow) / total_Zflow
 
                             coverage_fraction = volume_fraction
 
                         else:
-
                             area_fraction = np.true_divide(
                                 np.sum(masked_Zflow > 0), np.sum(Zflow > 0)
                             )
@@ -2317,7 +2231,6 @@ def main(input: Input):
                             coverage_fraction = area_fraction
 
                         if coverage_fraction < input.masking_threshold:
-
                             break
 
                     output_haz_masked = (
@@ -2343,7 +2256,6 @@ def main(input: Input):
         # if restart_files is not empty load restart files (if existing)
         if len(restart_files) > 0:
             for i_restart in range(0, len(restart_files)):
-
                 Zflow_old = np.zeros((ny, nx))
 
                 input.source = restart_files[i_restart]
@@ -2369,7 +2281,6 @@ def main(input: Input):
                 Zflow_old = np.flipud(arr)
 
                 if crop_flag:
-
                     Zflow_old = Zflow_old[jS:jN, iW:iE]
 
                 Zflow = Zflow + Zflow_old
