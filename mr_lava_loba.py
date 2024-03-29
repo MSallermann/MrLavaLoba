@@ -1353,6 +1353,83 @@ class MrLavaLoba:
                     i, 0 : j_top - j_bottom, 0 : i_right - i_left
                 ] = Zflow_local_int
 
+    def add_inertia(self, i, idx, slope, new_angle):
+        input = self.input
+
+        # cos and sin of the angle of the parent lobe
+        cos_angle1 = np.cos(self.angle[idx] * np.pi / 180.0)
+        sin_angle1 = np.sin(self.angle[idx] * np.pi / 180.0)
+
+        # cos and sin of the angle of maximum slope
+        cos_angle2 = np.cos(new_angle * np.pi / 180.0)
+        sin_angle2 = np.sin(new_angle * np.pi / 180.0)
+
+        if input.inertial_exponent == 0:
+            self.alfa_inertial[i] = 0.0
+
+        else:
+            self.alfa_inertial[i] = (
+                1.0 - (2.0 * np.arctan(slope) / np.pi) ** input.inertial_exponent
+            ) ** (1.0 / input.inertial_exponent)
+
+        x_avg = (1.0 - self.alfa_inertial[i]) * cos_angle2 + self.alfa_inertial[
+            i
+        ] * cos_angle1
+        y_avg = (1.0 - self.alfa_inertial[i]) * sin_angle2 + self.alfa_inertial[
+            i
+        ] * sin_angle1
+
+        angle_avg = np.mod(180 * np.arctan2(y_avg, x_avg) / np.pi, 360)
+
+        new_angle = angle_avg
+        return new_angle
+
+        # if not input.alfa_channel is None and input.alfa_channel > 0.0:
+        #     old_angle = new_angle
+
+        #     # interpolate the vector at the corners of the pixel to find the
+        #     # vector at the center of the lobe
+        #     cos_angle_old = np.cos(np.radians(old_angle))
+        #     sin_angle_old = np.sin(np.radians(old_angle))
+
+        #     # print('cos_angle1,sin_angle1',cos_angle1,sin_angle1)
+
+        #     x_avg2 = xi_fract * (
+        #         yi_fract * self.vx[iy1, ix1] + (1.0 - yi_fract) * self.vx[iy, ix1]
+        #     ) + (1.0 - xi_fract) * (
+        #         yi_fract * self.vx[iy1, ix] + (1.0 - yi_fract) * self.vx[iy, ix]
+        #     )
+        #     y_avg2 = xi_fract * (
+        #         yi_fract * self.vy[iy1, ix1] + (1.0 - yi_fract) * self.vy[iy, ix1]
+        #     ) + (1.0 - xi_fract) * (
+        #         yi_fract * self.vy[iy1, ix] + (1.0 - yi_fract) * self.vy[iy, ix]
+        #     )
+
+        #     if x_avg2**2 + y_avg2**2 > 0.0:
+        #         cos_angle_new = x_avg2 / np.sqrt(x_avg2**2 + y_avg2**2)
+        #         sin_angle_new = y_avg2 / np.sqrt(x_avg2**2 + y_avg2**2)
+
+        #         # print('cos_angle2,sin_angle2',cos_angle2,sin_angle2)
+
+        #         distxyidx = xi_fract * (
+        #             yi_fract * self.distxy[iy1, ix1]
+        #             + (1.0 - yi_fract) * self.distxy[iy, ix1]
+        #         ) + (1.0 - xi_fract) * (
+        #             yi_fract * self.distxy[iy1, ix]
+        #             + (1.0 - yi_fract) * self.distxy[iy, ix]
+        #         )
+
+        #         x_avg = (
+        #             1.0 - input.alfa_channel * distxyidx
+        #         ) * cos_angle_old + input.alfa_channel * distxyidx * cos_angle_new
+        #         y_avg = (
+        #             1.0 - input.alfa_channel * distxyidx
+        #         ) * sin_angle_old + input.alfa_channel * distxyidx * sin_angle_new
+
+        #         angle_avg = np.mod(180.0 * np.arctan2(y_avg, x_avg) / np.pi, 360.0)
+
+        #         new_angle = angle_avg
+
     def run(self):
         input = self.input
 
@@ -1366,9 +1443,6 @@ class MrLavaLoba:
         self.setup_run_file()
 
         self.allocate_lobe_data()
-
-        # Needed for numpy conversions
-        deg2rad = np.pi / 180.0
 
         # Define variables needed to build the ellipses
         t = np.linspace(0.0, 2.0 * np.pi, input.npoints)
@@ -1533,97 +1607,19 @@ class MrLavaLoba:
 
                 # STEP 3: ADD THE EFFECT OF INERTIA
 
-                # cos and sin of the angle of the parent lobe
-                cos_angle1 = np.cos(self.angle[idx] * deg2rad)
-                sin_angle1 = np.sin(self.angle[idx] * deg2rad)
-
-                # cos and sin of the angle of maximum slope
-                cos_angle2 = np.cos(new_angle * deg2rad)
-                sin_angle2 = np.sin(new_angle * deg2rad)
-
-                if input.inertial_exponent == 0:
-                    self.alfa_inertial[i] = 0.0
-
-                else:
-                    self.alfa_inertial[i] = (
-                        1.0
-                        - (2.0 * np.arctan(slope) / np.pi) ** input.inertial_exponent
-                    ) ** (1.0 / input.inertial_exponent)
-
-                x_avg = (1.0 - self.alfa_inertial[i]) * cos_angle2 + self.alfa_inertial[
-                    i
-                ] * cos_angle1
-                y_avg = (1.0 - self.alfa_inertial[i]) * sin_angle2 + self.alfa_inertial[
-                    i
-                ] * sin_angle1
-
-                angle_avg = np.mod(180 * np.arctan2(y_avg, x_avg) / np.pi, 360)
-
-                new_angle = angle_avg
-
-                if not input.alfa_channel is None and input.alfa_channel > 0.0:
-                    old_angle = new_angle
-
-                    # interpolate the vector at the corners of the pixel to find the
-                    # vector at the center of the lobe
-                    cos_angle_old = np.cos(np.radians(old_angle))
-                    sin_angle_old = np.sin(np.radians(old_angle))
-
-                    # print('cos_angle1,sin_angle1',cos_angle1,sin_angle1)
-
-                    x_avg2 = xi_fract * (
-                        yi_fract * self.vx[iy1, ix1]
-                        + (1.0 - yi_fract) * self.vx[iy, ix1]
-                    ) + (1.0 - xi_fract) * (
-                        yi_fract * self.vx[iy1, ix] + (1.0 - yi_fract) * self.vx[iy, ix]
-                    )
-                    y_avg2 = xi_fract * (
-                        yi_fract * self.vy[iy1, ix1]
-                        + (1.0 - yi_fract) * self.vy[iy, ix1]
-                    ) + (1.0 - xi_fract) * (
-                        yi_fract * self.vy[iy1, ix] + (1.0 - yi_fract) * self.vy[iy, ix]
-                    )
-
-                    if x_avg2**2 + y_avg2**2 > 0.0:
-                        cos_angle_new = x_avg2 / np.sqrt(x_avg2**2 + y_avg2**2)
-                        sin_angle_new = y_avg2 / np.sqrt(x_avg2**2 + y_avg2**2)
-
-                        # print('cos_angle2,sin_angle2',cos_angle2,sin_angle2)
-
-                        distxyidx = xi_fract * (
-                            yi_fract * self.distxy[iy1, ix1]
-                            + (1.0 - yi_fract) * self.distxy[iy, ix1]
-                        ) + (1.0 - xi_fract) * (
-                            yi_fract * self.distxy[iy1, ix]
-                            + (1.0 - yi_fract) * self.distxy[iy, ix]
-                        )
-
-                        x_avg = (
-                            (1.0 - input.alfa_channel * distxyidx) * cos_angle_old
-                            + input.alfa_channel * distxyidx * cos_angle_new
-                        )
-                        y_avg = (
-                            (1.0 - input.alfa_channel * distxyidx) * sin_angle_old
-                            + input.alfa_channel * distxyidx * sin_angle_new
-                        )
-
-                        angle_avg = np.mod(
-                            180.0 * np.arctan2(y_avg, x_avg) / np.pi, 360.0
-                        )
-
-                        new_angle = angle_avg
+                new_angle = self.add_inertia(i, idx, slope, new_angle)
 
                 # STEP 4: DEFINE THE SEMI-AXIS OF THE NEW LOBE
 
                 # a define the ang.coeff. of the line defining the location of the
                 # center of the new lobe in a coordinate system defined by the
                 # semi-axes of the existing lobe
-                a = np.tan(deg2rad * (new_angle - self.angle[idx]))
+                a = np.tan(np.pi / 180.0 * (new_angle - self.angle[idx]))
 
                 # xt is the 1st-coordinate of the point of the boundary of the ellipse
                 # definind the direction of the new lobe, in a coordinate system
                 # defined by the semi-axes of the existing lobe
-                if np.cos(deg2rad * (new_angle - self.angle[idx])) > 0:
+                if np.cos(np.pi / 180.0 * (new_angle - self.angle[idx])) > 0:
                     xt = np.sqrt(
                         self.x1[idx] ** 2
                         * self.x2[idx] ** 2
@@ -1648,6 +1644,8 @@ class MrLavaLoba:
                 # center of the existing lobe, but this time with the axes parallel to
                 # the original x and y axes.
 
+                cos_angle1 = np.cos(self.angle[idx] * np.pi / 180.0)
+                sin_angle1 = np.sin(self.angle[idx] * np.pi / 180.0)
                 delta_x = xt * cos_angle1 - yt * sin_angle1
                 delta_y = xt * sin_angle1 + yt * cos_angle1
 
