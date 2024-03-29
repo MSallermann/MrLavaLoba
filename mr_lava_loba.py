@@ -400,7 +400,9 @@ class MrLavaLoba:
         self.y = np.array([], dtype=float)  # @NOTE: coordinates of ellipse centers
         self.x1 = np.array([], dtype=float)  # @NOTE: major semi-axis of ellipse
         self.x2 = np.array([], dtype=float)  # @NOTE: minor semi-axis of ellipse
-        self.dist_int = np.array([], dtype=int)
+        self.dist_int = np.array(
+            [], dtype=int
+        )  # @NOTE: the length of the shortest path from the initial lobe to the current lobe in number of ellipses
         self.parent = np.array([], dtype=int)
         self.alfa_inertial = np.array([], dtype=float)
         self.avg_lobe_thickness: float = 0
@@ -1102,6 +1104,49 @@ class MrLavaLoba:
         self.x1[i] = np.sqrt(input.lobe_area / np.pi) * np.sqrt(aspect_ratio)
         self.x2[i] = np.sqrt(input.lobe_area / np.pi) / np.sqrt(aspect_ratio)
 
+    def compute_lobe_parent_idx(self, i, descendents):
+        input = self.input
+        if input.lobe_exponent > 0:
+            idx0 = np.random.uniform(0, 1, size=1)
+            idx1 = idx0**input.lobe_exponent
+
+            if input.force_max_length:
+                # the parent lobe is chosen only among those with
+                # dist smaller than the maximum value fixed in input
+                mask = self.dist_int[0:i] < input.max_length
+                idx2 = sum(mask[0:i]) * idx1
+                idx3 = np.floor(idx2)
+                idx = int(idx3)
+                sorted_dist = np.argsort(self.dist_int[0:i])
+                idx = sorted_dist[idx]
+            else:
+                # the parent lobe is chosen among all the lobes
+                idx2 = i * idx1
+                idx3 = np.floor(idx2)
+                idx = int(idx3)
+
+            if input.start_from_dist_flag:
+                # the probability law is associated to the distance
+                # from the vent
+                sorted_dist = np.argsort(self.dist_int[0:i])
+                idx = sorted_dist[idx]
+        else:
+            idx = i - 1
+
+        # save the index of the parent and the distance from first lobe of the
+        # chain
+        self.parent[i] = idx
+        self.dist_int[i] = self.dist_int[idx] + 1
+
+        # for all the "ancestors" increase by one the number of descendents
+        last = i
+        for j in range(0, self.dist_int[idx] + 1):
+            previous = self.parent[last]
+            descendents[previous] = descendents[previous] + 1
+            last = previous
+
+        return idx
+
     def rasterize_lobe(
         self,
         i,
@@ -1362,59 +1407,7 @@ class MrLavaLoba:
 
                 self.print_lobe_status(i, n_lobes)
                 # STEP 0: DEFINE THE INDEX idx OF THE PARENT LOBE
-
-                if input.lobe_exponent > 0:
-                    idx0 = np.random.uniform(0, 1, size=1)
-
-                    idx1 = idx0**input.lobe_exponent
-
-                    if input.force_max_length:
-                        # the parent lobe is chosen only among those with
-                        # dist smaller than the maximum value fixed in input
-                        mask = self.dist_int[0:i] < input.max_length
-
-                        idx2 = sum(mask[0:i]) * idx1
-
-                        idx3 = np.floor(idx2)
-
-                        idx = int(idx3)
-
-                        sorted_dist = np.argsort(self.dist_int[0:i])
-
-                        idx = sorted_dist[idx]
-
-                    else:
-                        # the parent lobe is chosen among all the lobes
-
-                        idx2 = i * idx1
-
-                        idx3 = np.floor(idx2)
-
-                        idx = int(idx3)
-
-                    if input.start_from_dist_flag:
-                        # the probability law is associated to the distance
-                        # from the vent
-                        sorted_dist = np.argsort(self.dist_int[0:i])
-
-                        idx = sorted_dist[idx]
-
-                else:
-                    idx = i - 1
-
-                # save the index of the parent and the distance from first lobe of the
-                # chain
-                self.parent[i] = idx
-                self.dist_int[i] = self.dist_int[idx] + 1
-
-                # for all the "ancestors" increase by one the number of descendents
-
-                last = i
-
-                for j in range(0, self.dist_int[idx] + 1):
-                    previous = self.parent[last]
-                    descendents[previous] = descendents[previous] + 1
-                    last = previous
+                idx = self.compute_lobe_parent_idx(i, descendents)
 
                 # local slope of the topography. The slope affects both the location of
                 # the new lobe on the boundary of the previous one and its aspect
