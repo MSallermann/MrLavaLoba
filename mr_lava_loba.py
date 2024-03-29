@@ -1356,6 +1356,8 @@ class MrLavaLoba:
                 i, 0 : j_top - j_bottom, 0 : i_right - i_left
             ] = Zflow_local_int
 
+        return Zflow_local_int, Zflow_local, j_bottom, j_top, i_left, i_right
+
     def add_inertia(self, i, idx, slope, new_angle):
         input = self.input
 
@@ -1744,67 +1746,25 @@ class MrLavaLoba:
 
                 # check the grid points covered by the lobe
                 if input.saveraster_flag == 1:
-                    # compute the new lobe
-                    [xe, ye] = self.ellipse(
-                        self.x[i], self.y[i], self.x1[i], self.x2[i], self.angle[i]
+                    (
+                        Zflow_local_int,
+                        Zflow_local,
+                        j_bottom,
+                        j_top,
+                        i_left,
+                        i_right,
+                    ) = self.rasterize_lobe(
+                        i,
+                        delta_lobe_thickness,
+                        Zflow,
+                        Ztot,
+                        Zdist,
+                        Zflow_local_array,
+                        jtop_array,
+                        jbottom_array,
+                        iright_array,
+                        ileft_array,
                     )
-
-                    # bounding box for the new lobe
-                    # the indexes are referred to the centers of the pixels
-                    min_xe = np.min(xe)
-                    max_xe = np.max(xe)
-
-                    min_ye = np.min(ye)
-                    max_ye = np.max(ye)
-
-                    xi = (min_xe - asc_file.xcmin) / asc_file.cell
-                    ix = np.floor(xi)
-                    i_left = ix.astype(int)
-                    i_left = np.maximum(0, np.minimum(asc_file.nx - 1, i_left))
-
-                    xi = (max_xe - asc_file.xcmin) / asc_file.cell
-                    ix = np.floor(xi)
-                    i_right = ix.astype(int) + 2
-                    i_right = np.maximum(0, np.minimum(asc_file.nx - 1, i_right))
-
-                    yj = (min_ye - asc_file.ycmin) / asc_file.cell
-                    jy = np.floor(yj)
-                    j_bottom = jy.astype(int)
-                    j_bottom = np.maximum(0, np.minimum(asc_file.ny - 1, j_bottom))
-
-                    yj = (max_ye - asc_file.ycmin) / asc_file.cell
-                    jy = np.floor(yj)
-                    j_top = jy.astype(int) + 2
-                    j_top = np.maximum(0, np.minimum(asc_file.ny - 1, j_top))
-
-                    # the centers of the pixels are used to compute the intersection
-                    # with the lobe
-                    Xc_local = asc_file.Xc[j_bottom:j_top, i_left:i_right]
-                    Yc_local = asc_file.Yc[j_bottom:j_top, i_left:i_right]
-
-                    # compute the fraction of cells covered by the lobe (local index)
-                    # for each pixel a square [-0.5*cell;0.5*cell]X[-0.5*cell;0.5*cell]
-                    # is built around its center to compute the intersection with the
-                    # lobe the coverage values are associated to each pixel (at the
-                    # center)
-                    area_fract = self.local_intersection(
-                        Xc_local,
-                        Yc_local,
-                        self.x[i],
-                        self.y[i],
-                        self.x1[i],
-                        self.x2[i],
-                        self.angle[i],
-                    )
-
-                    Zflow_local = area_fract
-
-                    # compute the local integer covering (0-not covered  1-covered)
-                    Zflow_local_int = np.ceil(area_fract)
-                    Zflow_local_int = Zflow_local_int.astype(int)
-
-                    # print('Zflow_local_int')
-                    # print(Zflow_local_int)
 
                     # define the distance (number of lobes) from the vent (local index)
                     Zdist_local = Zflow_local_int * self.dist_int[i] + 9999 * (
