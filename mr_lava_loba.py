@@ -1277,18 +1277,22 @@ class MrLavaLoba:
             xi = (min_xe - asc_file.xcmin) / asc_file.cell
             ix = np.floor(xi)
             i_left = ix.astype(int)
+            i_left = np.maximum(0, np.minimum(asc_file.nx - 1, i_left))
 
             xi = (max_xe - asc_file.xcmin) / asc_file.cell
             ix = np.floor(xi)
             i_right = ix.astype(int) + 2
+            i_right = np.maximum(0, np.minimum(asc_file.nx - 1, i_right))
 
             yj = (min_ye - asc_file.ycmin) / asc_file.cell
             jy = np.floor(yj)
             j_bottom = jy.astype(int)
+            j_bottom = np.maximum(0, np.minimum(asc_file.ny - 1, j_bottom))
 
             yj = (max_ye - asc_file.ycmin) / asc_file.cell
             jy = np.floor(yj)
             j_top = jy.astype(int) + 2
+            j_top = np.maximum(0, np.minimum(asc_file.ny - 1, j_top))
 
             # define the subgrid of pixels to check for coverage
             Xc_local = asc_file.Xc[j_bottom:j_top, i_left:i_right]
