@@ -395,11 +395,11 @@ class MrLavaLoba:
         self.input = input
         self.cum_fiss_length = np.array([], dtype=float)
         self.n_vents: int = 0
-        self.angle = np.array([], dtype=float)
-        self.x = np.array([], dtype=float)
-        self.y = np.array([], dtype=float)
-        self.x1 = np.array([], dtype=float)
-        self.x2 = np.array([], dtype=float)
+        self.angle = np.array([], dtype=float)  # @NOTE: azimuthal angle of ellipse
+        self.x = np.array([], dtype=float)  # @NOTE: coordinates of ellipse centers
+        self.y = np.array([], dtype=float)  # @NOTE: coordinates of ellipse centers
+        self.x1 = np.array([], dtype=float)  # @NOTE: major semi-axis of ellipse
+        self.x2 = np.array([], dtype=float)  # @NOTE: minor semi-axis of ellipse
         self.dist_int = np.array([], dtype=int)
         self.parent = np.array([], dtype=int)
         self.alfa_inertial = np.array([], dtype=float)
@@ -1000,6 +1000,11 @@ class MrLavaLoba:
                 self.y[i] = input.y_vent[int(i_vent)]
 
     def get_slope(self, i, Ztot):
+        # compute the gradient of the topography(+ eventually the flow)
+        # here the centered grid is used (Z values saved at the centers of
+        # the pixels)
+        # xc[ix] < lobe_center_x < xc[ix1]
+        # yc[iy] < lobe_center_y < yc[iy1]
         asc_file = self.asc_file
 
         xi = (self.x[i] - asc_file.xcmin) / asc_file.cell
@@ -1036,6 +1041,46 @@ class MrLavaLoba:
         slope = np.sqrt(np.square(Fx_test) + np.square(Fy_test))
 
         return max_slope_angle, slope
+
+    def compute_lobe_angle(self, i, max_slope_angle, slope):
+        input = self.input
+        # PERTURBE THE MAXIMUM SLOPE ANGLE ACCORDING TO PROBABILITY LAW
+        # this expression define a coefficient used for the direction of the
+        # next slope
+        input = self.input
+        if input.max_slope_prob < 1:
+            # angle defining the direction of the new slope. when slope=0, then
+            # we have an uniform distribution for the possible angles for the
+            # next lobe.
+            slopedeg = 180.0 * np.arctan(slope) / np.pi
+            if (slopedeg > 0.0) and (input.max_slope_prob > 0):
+                sigma = (
+                    (1.0 - input.max_slope_prob)
+                    / input.max_slope_prob
+                    * (90.0 - slopedeg)
+                    / slopedeg
+                )
+                rand_angle_new = rtnorm.rtnorm(-180, 180, 0, sigma)
+            else:
+                rand = np.random.uniform(0, 1, size=1)
+                rand_angle_new = 360.0 * np.abs(rand - 0.5)
+
+            self.angle[i] = max_slope_angle + rand_angle_new
+
+        else:
+            self.angle[i] = max_slope_angle
+
+    def compute_lobe_axes(self, i, slope):
+        input = self.input
+        # factor for the lobe eccentricity
+        aspect_ratio = min(
+            input.max_aspect_ratio, 1.0 + input.aspect_ratio_coeff * slope
+        )
+        # semi-axes of the lobe:
+        # self.x1(i) is the major semi-axis of the lobe;
+        # self.x2(i) is the minor semi-axis of the lobe.
+        self.x1[i] = np.sqrt(input.lobe_area / np.pi) * np.sqrt(aspect_ratio)
+        self.x2[i] = np.sqrt(input.lobe_area / np.pi) / np.sqrt(aspect_ratio)
 
     def run(self):
         input = self.input
@@ -1176,53 +1221,11 @@ class MrLavaLoba:
                 self.dist_int[i] = 0  # @NOTE: why is the distance an integer?
                 descendents[i] = 0  # @NOTE: the total number of descendants per lobe?
 
-                # compute the gradient of the topography(+ eventually the flow)
-                # here the centered grid is used (Z values saved at the centers of
-                # the pixels)
-                # xc[ix] < lobe_center_x < xc[ix1]
-                # yc[iy] < lobe_center_y < yc[iy1]
-
                 max_slope_angle, slope = self.get_slope(i, Ztot)
 
-                # PERTURBE THE MAXIMUM SLOPE ANGLE ACCORDING TO PROBABILITY LAW
+                self.compute_lobe_angle(i, max_slope_angle, slope)
 
-                # this expression define a coefficient used for the direction of the
-                # next slope
-                if input.max_slope_prob < 1:
-                    # angle defining the direction of the new slope. when slope=0, then
-                    # we have an uniform distribution for the possible angles for the
-                    # next lobe.
-
-                    slopedeg = 180.0 * np.arctan(slope) / np.pi
-
-                    if (slopedeg > 0.0) and (input.max_slope_prob > 0):
-                        sigma = (
-                            (1.0 - input.max_slope_prob)
-                            / input.max_slope_prob
-                            * (90.0 - slopedeg)
-                            / slopedeg
-                        )
-                        rand_angle_new = rtnorm.rtnorm(-180, 180, 0, sigma)
-
-                    else:
-                        rand = np.random.uniform(0, 1, size=1)
-                        rand_angle_new = 360.0 * np.abs(rand - 0.5)
-
-                    self.angle[i] = max_slope_angle + rand_angle_new
-
-                else:
-                    self.angle[i] = max_slope_angle
-
-                # factor for the lobe eccentricity
-                aspect_ratio = min(
-                    input.max_aspect_ratio, 1.0 + input.aspect_ratio_coeff * slope
-                )
-
-                # semi-axes of the lobe:
-                # self.x1(i) is the major semi-axis of the lobe;
-                # self.x2(i) is the minor semi-axis of the lobe.
-                self.x1[i] = np.sqrt(input.lobe_area / np.pi) * np.sqrt(aspect_ratio)
-                self.x2[i] = np.sqrt(input.lobe_area / np.pi) / np.sqrt(aspect_ratio)
+                self.compute_lobe_axes(i, slope)
 
                 if input.saveraster_flag == 1:
                     # compute the points of the lobe
