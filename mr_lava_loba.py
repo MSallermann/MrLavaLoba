@@ -1210,6 +1210,7 @@ class MrLavaLoba:
 
     def compute_lobe_parent_idx(self, i, descendents):
         input = self.input
+
         if input.lobe_exponent > 0:
             idx0 = np.random.uniform(0, 1, size=1)
             idx1 = idx0**input.lobe_exponent
@@ -1379,7 +1380,6 @@ class MrLavaLoba:
 
         if input.inertial_exponent == 0:
             self.alfa_inertial[i] = 0.0
-
         else:
             self.alfa_inertial[i] = (
                 1.0 - (2.0 * np.arctan(slope) / np.pi) ** input.inertial_exponent
