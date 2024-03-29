@@ -1529,26 +1529,7 @@ class MrLavaLoba:
                     # angle defining the direction of the new slope. when slope=0, then
                     # we have an uniform distribution for the possible angles for the
                     # next lobe.
-
-                    slopedeg = 180.0 * np.arctan(slope) / np.pi
-
-                    if (slopedeg > 0.0) and (input.max_slope_prob > 0.0):
-                        sigma = (
-                            (1.0 - input.max_slope_prob)
-                            / input.max_slope_prob
-                            * (90.0 - slopedeg)
-                            / slopedeg
-                        )
-                        rand_angle_new = rtnorm.rtnorm(-180.0, 180.0, 0.0, sigma)
-
-                    else:
-                        rand = np.random.uniform(0, 1, size=1)
-                        rand_angle_new = 360.0 * np.abs(rand - 0.5)
-
-                    new_angle = max_slope_angle + rand_angle_new[0]
-
-                else:
-                    new_angle = max_slope_angle
+                    new_angle = self.compute_lobe_angle(max_slope_angle, slope)
 
                 # STEP 3: ADD THE EFFECT OF INERTIA
 
