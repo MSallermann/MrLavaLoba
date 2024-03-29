@@ -1259,103 +1259,102 @@ class MrLavaLoba:
         input = self.input
         asc_file = self.asc_file
 
-        if input.saveraster_flag == 1:
-            # compute the points of the lobe
-            [xe, ye] = self.ellipse(
-                self.x[i], self.y[i], self.x1[i], self.x2[i], self.angle[i]
-            )
+        # compute the points of the lobe
+        [xe, ye] = self.ellipse(
+            self.x[i], self.y[i], self.x1[i], self.x2[i], self.angle[i]
+        )
 
-            # bounding box for the lobe
-            # (xc[i_left]<xe<xc[i_right];yc[j_bottom]<ye<yc[j_top])
-            # the indexes are referred to the centers of the pixels
-            min_xe = np.min(xe)
-            max_xe = np.max(xe)
+        # bounding box for the lobe
+        # (xc[i_left]<xe<xc[i_right];yc[j_bottom]<ye<yc[j_top])
+        # the indexes are referred to the centers of the pixels
+        min_xe = np.min(xe)
+        max_xe = np.max(xe)
 
-            min_ye = np.min(ye)
-            max_ye = np.max(ye)
+        min_ye = np.min(ye)
+        max_ye = np.max(ye)
 
-            xi = (min_xe - asc_file.xcmin) / asc_file.cell
-            ix = np.floor(xi)
-            i_left = ix.astype(int)
-            i_left = np.maximum(0, np.minimum(asc_file.nx - 1, i_left))
+        xi = (min_xe - asc_file.xcmin) / asc_file.cell
+        ix = np.floor(xi)
+        i_left = ix.astype(int)
+        i_left = np.maximum(0, np.minimum(asc_file.nx - 1, i_left))
 
-            xi = (max_xe - asc_file.xcmin) / asc_file.cell
-            ix = np.floor(xi)
-            i_right = ix.astype(int) + 2
-            i_right = np.maximum(0, np.minimum(asc_file.nx - 1, i_right))
+        xi = (max_xe - asc_file.xcmin) / asc_file.cell
+        ix = np.floor(xi)
+        i_right = ix.astype(int) + 2
+        i_right = np.maximum(0, np.minimum(asc_file.nx - 1, i_right))
 
-            yj = (min_ye - asc_file.ycmin) / asc_file.cell
-            jy = np.floor(yj)
-            j_bottom = jy.astype(int)
-            j_bottom = np.maximum(0, np.minimum(asc_file.ny - 1, j_bottom))
+        yj = (min_ye - asc_file.ycmin) / asc_file.cell
+        jy = np.floor(yj)
+        j_bottom = jy.astype(int)
+        j_bottom = np.maximum(0, np.minimum(asc_file.ny - 1, j_bottom))
 
-            yj = (max_ye - asc_file.ycmin) / asc_file.cell
-            jy = np.floor(yj)
-            j_top = jy.astype(int) + 2
-            j_top = np.maximum(0, np.minimum(asc_file.ny - 1, j_top))
+        yj = (max_ye - asc_file.ycmin) / asc_file.cell
+        jy = np.floor(yj)
+        j_top = jy.astype(int) + 2
+        j_top = np.maximum(0, np.minimum(asc_file.ny - 1, j_top))
 
-            # define the subgrid of pixels to check for coverage
-            Xc_local = asc_file.Xc[j_bottom:j_top, i_left:i_right]
-            Yc_local = asc_file.Yc[j_bottom:j_top, i_left:i_right]
+        # define the subgrid of pixels to check for coverage
+        Xc_local = asc_file.Xc[j_bottom:j_top, i_left:i_right]
+        Yc_local = asc_file.Yc[j_bottom:j_top, i_left:i_right]
 
-            # compute the fraction of cells covered by the lobe (local index)
-            # for each pixel a square [-0.5*cell;0.5*cell]X[-0.5*cell;0.5*cell]
-            # is built around its center to compute the intersection with the
-            # lobe the coverage values are associated to each pixel (at the
-            # center)
-            area_fract = self.local_intersection(
-                Xc_local,
-                Yc_local,
-                self.x[i],
-                self.y[i],
-                self.x1[i],
-                self.x2[i],
-                self.angle[i],
-            )
-            Zflow_local = area_fract
+        # compute the fraction of cells covered by the lobe (local index)
+        # for each pixel a square [-0.5*cell;0.5*cell]X[-0.5*cell;0.5*cell]
+        # is built around its center to compute the intersection with the
+        # lobe the coverage values are associated to each pixel (at the
+        # center)
+        area_fract = self.local_intersection(
+            Xc_local,
+            Yc_local,
+            self.x[i],
+            self.y[i],
+            self.x1[i],
+            self.x2[i],
+            self.angle[i],
+        )
+        Zflow_local = area_fract
 
-            # compute also as integer (0=pixel non covereb by lobe;1=pixel
-            # covered by lobe)
-            Zflow_local_int = np.ceil(area_fract)
-            Zflow_local_int = Zflow_local_int.astype(int)
+        # compute also as integer (0=pixel non covereb by lobe;1=pixel
+        # covered by lobe)
+        Zflow_local_int = np.ceil(area_fract)
+        Zflow_local_int = Zflow_local_int.astype(int)
 
-            # compute the thickness of the lobe
-            lobe_thickness = self.thickness_min + (i - 1) * delta_lobe_thickness
+        # compute the thickness of the lobe
+        lobe_thickness = self.thickness_min + (i - 1) * delta_lobe_thickness
 
-            # update the thickness of the flow with the new lobe
-            Zflow[j_bottom:j_top, i_left:i_right] += lobe_thickness * Zflow_local
+        # update the thickness of the flow with the new lobe
+        Zflow[j_bottom:j_top, i_left:i_right] += lobe_thickness * Zflow_local
 
-            # update the topography
+        # update the topography
 
-            # change 2022/01/13
-            # FROM HERE
-            Ztot[j_bottom:j_top, i_left:i_right] += (
-                self.filling_parameter[j_bottom:j_top, i_left:i_right]
-                * lobe_thickness
-                * Zflow_local
-            )
+        # change 2022/01/13
+        # FROM HERE
+        Ztot[j_bottom:j_top, i_left:i_right] += (
+            self.filling_parameter[j_bottom:j_top, i_left:i_right]
+            * lobe_thickness
+            * Zflow_local
+        )
 
-            # TO HERE
+        # TO HERE
 
-            # compute the new minimum "lobe distance" of the pixels from the
-            # vent
-            Zdist_local = Zflow_local_int * self.dist_int[i] + 9999 * (Zflow_local == 0)
+        # compute the new minimum "lobe distance" of the pixels from the
+        # vent
+        Zdist_local = Zflow_local_int * self.dist_int[i] + 9999 * (Zflow_local == 0)
 
-            Zdist[j_bottom:j_top, i_left:i_right] = np.minimum(
-                Zdist[j_bottom:j_top, i_left:i_right], Zdist_local
-            )
+        Zdist[j_bottom:j_top, i_left:i_right] = np.minimum(
+            Zdist[j_bottom:j_top, i_left:i_right], Zdist_local
+        )
 
-            # store the bounding box of the new lobe
-            jtop_array[i] = j_top
-            jbottom_array[i] = j_bottom
-            iright_array[i] = i_right
-            ileft_array[i] = i_left
+        # store the bounding box of the new lobe
+        jtop_array[i] = j_top
+        jbottom_array[i] = j_bottom
+        iright_array[i] = i_right
+        ileft_array[i] = i_left
 
-            if input.hazard_flag:
-                # store the local array of integer coverage in the global array
-                Zflow_local_array[
-                    i, 0 : j_top - j_bottom, 0 : i_right - i_left
-                ] = Zflow_local_int
+        if input.hazard_flag:
+            # store the local array of integer coverage in the global array
+            Zflow_local_array[
+                i, 0 : j_top - j_bottom, 0 : i_right - i_left
+            ] = Zflow_local_int
 
     def add_inertia(self, i, idx, slope, new_angle):
         input = self.input
@@ -1664,18 +1663,19 @@ class MrLavaLoba:
 
                 self.compute_lobe_axes(i, slope)
 
-                self.rasterize_lobe(
-                    i,
-                    delta_lobe_thickness,
-                    Zflow,
-                    Ztot,
-                    Zdist,
-                    Zflow_local_array,
-                    jtop_array,
-                    jbottom_array,
-                    iright_array,
-                    ileft_array,
-                )
+                if input.saveraster_flag == 1:
+                    self.rasterize_lobe(
+                        i,
+                        delta_lobe_thickness,
+                        Zflow,
+                        Ztot,
+                        Zdist,
+                        Zflow_local_array,
+                        jtop_array,
+                        jbottom_array,
+                        iright_array,
+                        ileft_array,
+                    )
 
             last_lobe = n_lobes
 
