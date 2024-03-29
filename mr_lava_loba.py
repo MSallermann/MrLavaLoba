@@ -1716,11 +1716,9 @@ class MrLavaLoba:
                     new_angle = self.compute_lobe_angle(max_slope_angle, slope)
 
                 # STEP 3: ADD THE EFFECT OF INERTIA
-
                 new_angle = self.add_inertia(i, idx, slope, new_angle)
 
                 # STEP 4: DEFINE THE SEMI-AXIS OF THE NEW LOBE
-
                 # a define the ang.coeff. of the line defining the location of the
                 # center of the new lobe in a coordinate system defined by the
                 # semi-axes of the existing lobe
@@ -1732,7 +1730,6 @@ class MrLavaLoba:
                 [v, delta_x, delta_y, new_x1, new_x2] = res
 
                 # STEP 5: BUILD THE NEW LOBE
-
                 # (x_new,y_new) are the coordinates of the center of the new lobe
                 x_new = self.x[idx] + v * delta_x
                 y_new = self.y[idx] + v * delta_y
