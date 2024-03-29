@@ -99,6 +99,7 @@ def parse_input() -> Input:
     input.vent_flag = input_data.vent_flag
 
     input.npoints = input_data_advanced.npoints
+    # @NOTE: Number of repetitions of the first lobe (useful for initial spreading)
     input.n_init = input_data_advanced.n_init
     input.dist_fact = input_data_advanced.dist_fact
     input.flag_threshold = input_data_advanced.flag_threshold
@@ -535,9 +536,9 @@ class MrLavaLoba:
         print("Maximum number of lobes", self.alloc_n_lobes)
 
         # initialize the arrays for the lobes variables
-        self.angle = np.zeros(self.alloc_n_lobes)
-        self.x = np.zeros(self.alloc_n_lobes)
-        self.y = np.zeros(self.alloc_n_lobes)
+        self.angle = np.zeros(self.alloc_n_lobes)  # @NOTE: azimuthal angle of lobes
+        self.x = np.zeros(self.alloc_n_lobes)  # @NOTE: x position of lobe centers
+        self.y = np.zeros(self.alloc_n_lobes)  # @NOTE: y position of lobe centers
         self.x1 = np.zeros(self.alloc_n_lobes)
         self.x2 = np.zeros(self.alloc_n_lobes)
         self.dist_int = np.zeros(self.alloc_n_lobes, dtype=int) - 1
@@ -857,6 +858,185 @@ class MrLavaLoba:
             )
             sys.stdout.flush()
 
+    def compute_first_lobe_position(self, i, flow):
+        input = self.input
+
+        if self.n_vents == 1:
+            self.x[i] = input.x_vent[0]
+            self.y[i] = input.y_vent[0]
+        else:
+            if input.vent_flag == 0:
+                # input.vent_flag = 0  => the initial lobes are on the vents
+                #                   coordinates and the flows start initially
+                #                   from the first vent, then from the second
+                #                   and so on.
+
+                i_vent = int(np.floor(flow * self.n_vents / input.n_flows))
+
+                self.x[i] = input.x_vent[i_vent]
+                self.y[i] = input.y_vent[i_vent]
+
+            elif input.vent_flag == 1:
+                # input.vent_flag = 1  => the initial lobes are chosen randomly from
+                #                   the vents coordinates and each vent has the
+                #                   same probability
+
+                i_vent = np.random.randint(self.n_vents, size=1)
+
+                self.x[i] = input.x_vent[int(i_vent)]
+                self.y[i] = input.y_vent[int(i_vent)]
+
+            elif (input.vent_flag == 2) or (input.vent_flag == 6):
+                # input.vent_flag = 2  => the initial lobes are on the polyline
+                #                   connecting the vents and all the point of
+                #                   the polyline have the same probability
+
+                # input.vent_flag = 6  => the initial lobes are on the polyline
+                #                   connecting the vents and the probability of
+                #                   each segment is fixed in the input file
+
+                alfa_polyline = np.random.uniform(0, 1, size=1)
+
+                input.x_vent = np.argmax(self.cum_fiss_length > alfa_polyline)
+
+                num = alfa_polyline - self.cum_fiss_length[input.x_vent - 1]
+                den = (
+                    self.cum_fiss_length[input.x_vent]
+                    - self.cum_fiss_length[input.x_vent - 1]
+                )
+
+                alfa_segment = num / den
+
+                self.x[i] = (
+                    alfa_segment * input.x_vent[input.x_vent]
+                    + (1.0 - alfa_segment) * input.x_vent[input.x_vent - 1]
+                )
+
+                self.y[i] = (
+                    alfa_segment * input.y_vent[input.x_vent]
+                    + (1.0 - alfa_segment) * input.y_vent[input.x_vent - 1]
+                )
+
+            elif input.vent_flag == 3:
+                # input.vent_flag = 3  => the initial lobes are on the polyline
+                #                   connecting the vents and all the segments
+                #                   of the polyline have the same probability
+
+                i_segment = randrange(self.n_vents)
+
+                alfa_segment = np.random.uniform(0, 1, size=1)
+
+                self.x[i] = (
+                    alfa_segment * input.x_vent[i_segment]
+                    + (1.0 - alfa_segment) * input.x_vent[i_segment - 1]
+                )
+
+                self.y[i] = (
+                    alfa_segment * input.y_vent[i_segment]
+                    + (1.0 - alfa_segment) * input.y_vent[i_segment - 1]
+                )
+
+            elif (input.vent_flag == 4) or (input.vent_flag == 7):
+                # input.vent_flag = 4  => the initial lobes are on multiple
+                #                   fissures and all the point of the fissures
+                #                   have the same probability
+
+                # input.vent_flag = 7  => the initial lobes are on multiple
+                #                   fissures and the probability of
+                #                   each fissure is fixed in the input file
+
+                alfa_polyline = np.random.uniform(0, 1, size=1)
+
+                input.x_vent = np.argmax(self.cum_fiss_length > alfa_polyline)
+
+                num = alfa_polyline - self.cum_fiss_length[input.x_vent - 1]
+                den = (
+                    self.cum_fiss_length[input.x_vent]
+                    - self.cum_fiss_length[input.x_vent - 1]
+                )
+
+                alfa_segment = num / den
+                print()
+                print(input.x_vent - 1, alfa_segment)
+
+                self.x[i] = (
+                    alfa_segment * input.x_vent_end[input.x_vent - 1]
+                    + (1.0 - alfa_segment) * input.x_vent[input.x_vent - 1]
+                )
+
+                self.y[i] = (
+                    alfa_segment * input.y_vent_end[input.x_vent - 1]
+                    + (1.0 - alfa_segment) * input.y_vent[input.x_vent - 1]
+                )
+
+            elif input.vent_flag == 5:
+                # input.vent_flag = 5  => the initial lobes are on multiple
+                #                   fissures and all the fissures
+                #                   have the same probability
+
+                i_segment = randrange(self.n_vents)
+
+                alfa_segment = np.random.uniform(0, 1, size=1)
+
+                self.x[i] = (
+                    alfa_segment * input.x_vent_end[i_segment]
+                    + (1.0 - alfa_segment) * input.x_vent[i_segment]
+                )
+
+                self.y[i] = (
+                    alfa_segment * input.y_vent_end[i_segment]
+                    + (1.0 - alfa_segment) * input.y_vent[i_segment]
+                )
+
+            elif input.vent_flag == 8:
+                # input.vent_flag = 1  => the initial lobes are chosen randomly from
+                #                   the vents coordinates and each vent has
+                #                   the same probability
+
+                alfa_vent = np.random.uniform(0, 1, size=1)
+                i_vent = np.argmax(self.cum_fiss_length > alfa_vent)
+
+                self.x[i] = input.x_vent[int(i_vent)]
+                self.y[i] = input.y_vent[int(i_vent)]
+
+    def get_slope(self, i, Ztot):
+        asc_file = self.asc_file
+
+        xi = (self.x[i] - asc_file.xcmin) / asc_file.cell
+        yi = (self.y[i] - asc_file.ycmin) / asc_file.cell
+        ix = np.floor(xi)
+        iy = np.floor(yi)
+        ix = ix.astype(int)  # @NOTE: Integer offset indices?
+        iy = iy.astype(int)  # @NOTE: Integer offset indices?
+
+        # compute the baricentric coordinated of the lobe center in the pixel
+        # 0 < xi_fract < 1
+        # 0 < yi_fract < 1
+        xi_fract = xi - ix
+        yi_fract = yi - iy
+
+        # interpolate the slopes at the edges of the pixel to find the slope
+        # at the center of the lobe
+        Fx_test = (
+            yi_fract * (Ztot[iy + 1, ix + 1] - Ztot[iy + 1, ix])
+            + (1.0 - yi_fract) * (Ztot[iy, ix + 1] - Ztot[iy, ix])
+        ) / asc_file.cell
+
+        Fy_test = (
+            xi_fract * (Ztot[iy + 1, ix + 1] - Ztot[iy, ix + 1])
+            + (1.0 - xi_fract) * (Ztot[iy + 1, ix] - Ztot[iy, ix])
+        ) / asc_file.cell
+
+        # major semi-axis direction
+        max_slope_angle = np.mod(
+            180.0 + (180.0 * np.arctan2(Fy_test, Fx_test) / np.pi), 360.0
+        )
+
+        # slope of the topography at (x[0],y[0])
+        slope = np.sqrt(np.square(Fx_test) + np.square(Fy_test))
+
+        return max_slope_angle, slope
+
     def run(self):
         input = self.input
 
@@ -934,19 +1114,22 @@ class MrLavaLoba:
             Zflow_local_array = np.zeros(
                 (self.alloc_n_lobes, self.max_cells, self.max_cells), dtype=int
             )
+
+            # @NOTE: number of decendents ???
             descendents = np.zeros(self.alloc_n_lobes, dtype=int)
 
+            # @NOTE: This seems unused?
             i_first_check = input.n_check_loop
 
             if (input.a_beta == 0) and (input.b_beta == 0):
                 # DEFINE THE NUMBER OF LOBES OF THE FLOW (RANDOM VALUE BETWEEN
                 # MIN AND MAX)
+                # @NOTE: What does n_lobes mean? Whats the difference to alloc_n_lobes
                 n_lobes = int(
                     np.ceil(
                         np.random.uniform(input.min_n_lobes, input.max_n_lobes, size=1)
                     )
                 )
-
             else:
                 x_beta = (1.0 * flow) / (input.n_flows - 1)
                 n_lobes = int(
@@ -987,189 +1170,19 @@ class MrLavaLoba:
                     pass
 
                 # STEP 0: COMPUTE THE FIRST LOBES OF EACH FLOW
-
-                if self.n_vents == 1:
-                    self.x[i] = input.x_vent[0]
-                    self.y[i] = input.y_vent[0]
-
-                else:
-                    if input.vent_flag == 0:
-                        # input.vent_flag = 0  => the initial lobes are on the vents
-                        #                   coordinates and the flows start initially
-                        #                   from the first vent, then from the second
-                        #                   and so on.
-
-                        i_vent = int(np.floor(flow * self.n_vents / input.n_flows))
-
-                        self.x[i] = input.x_vent[i_vent]
-                        self.y[i] = input.y_vent[i_vent]
-
-                    elif input.vent_flag == 1:
-                        # input.vent_flag = 1  => the initial lobes are chosen randomly from
-                        #                   the vents coordinates and each vent has the
-                        #                   same probability
-
-                        i_vent = np.random.randint(self.n_vents, size=1)
-
-                        self.x[i] = input.x_vent[int(i_vent)]
-                        self.y[i] = input.y_vent[int(i_vent)]
-
-                    elif (input.vent_flag == 2) or (input.vent_flag == 6):
-                        # input.vent_flag = 2  => the initial lobes are on the polyline
-                        #                   connecting the vents and all the point of
-                        #                   the polyline have the same probability
-
-                        # input.vent_flag = 6  => the initial lobes are on the polyline
-                        #                   connecting the vents and the probability of
-                        #                   each segment is fixed in the input file
-
-                        alfa_polyline = np.random.uniform(0, 1, size=1)
-
-                        input.x_vent = np.argmax(self.cum_fiss_length > alfa_polyline)
-
-                        num = alfa_polyline - self.cum_fiss_length[input.x_vent - 1]
-                        den = (
-                            self.cum_fiss_length[input.x_vent]
-                            - self.cum_fiss_length[input.x_vent - 1]
-                        )
-
-                        alfa_segment = num / den
-
-                        self.x[i] = (
-                            alfa_segment * input.x_vent[input.x_vent]
-                            + (1.0 - alfa_segment) * input.x_vent[input.x_vent - 1]
-                        )
-
-                        self.y[i] = (
-                            alfa_segment * input.y_vent[input.x_vent]
-                            + (1.0 - alfa_segment) * input.y_vent[input.x_vent - 1]
-                        )
-
-                    elif input.vent_flag == 3:
-                        # input.vent_flag = 3  => the initial lobes are on the polyline
-                        #                   connecting the vents and all the segments
-                        #                   of the polyline have the same probability
-
-                        i_segment = randrange(self.n_vents)
-
-                        alfa_segment = np.random.uniform(0, 1, size=1)
-
-                        self.x[i] = (
-                            alfa_segment * input.x_vent[i_segment]
-                            + (1.0 - alfa_segment) * input.x_vent[i_segment - 1]
-                        )
-
-                        self.y[i] = (
-                            alfa_segment * input.y_vent[i_segment]
-                            + (1.0 - alfa_segment) * input.y_vent[i_segment - 1]
-                        )
-
-                    elif (input.vent_flag == 4) or (input.vent_flag == 7):
-                        # input.vent_flag = 4  => the initial lobes are on multiple
-                        #                   fissures and all the point of the fissures
-                        #                   have the same probability
-
-                        # input.vent_flag = 7  => the initial lobes are on multiple
-                        #                   fissures and the probability of
-                        #                   each fissure is fixed in the input file
-
-                        alfa_polyline = np.random.uniform(0, 1, size=1)
-
-                        input.x_vent = np.argmax(self.cum_fiss_length > alfa_polyline)
-
-                        num = alfa_polyline - self.cum_fiss_length[input.x_vent - 1]
-                        den = (
-                            self.cum_fiss_length[input.x_vent]
-                            - self.cum_fiss_length[input.x_vent - 1]
-                        )
-
-                        alfa_segment = num / den
-                        print()
-                        print(input.x_vent - 1, alfa_segment)
-
-                        self.x[i] = (
-                            alfa_segment * input.x_vent_end[input.x_vent - 1]
-                            + (1.0 - alfa_segment) * input.x_vent[input.x_vent - 1]
-                        )
-
-                        self.y[i] = (
-                            alfa_segment * input.y_vent_end[input.x_vent - 1]
-                            + (1.0 - alfa_segment) * input.y_vent[input.x_vent - 1]
-                        )
-
-                    elif input.vent_flag == 5:
-                        # input.vent_flag = 5  => the initial lobes are on multiple
-                        #                   fissures and all the fissures
-                        #                   have the same probability
-
-                        i_segment = randrange(self.n_vents)
-
-                        alfa_segment = np.random.uniform(0, 1, size=1)
-
-                        self.x[i] = (
-                            alfa_segment * input.x_vent_end[i_segment]
-                            + (1.0 - alfa_segment) * input.x_vent[i_segment]
-                        )
-
-                        self.y[i] = (
-                            alfa_segment * input.y_vent_end[i_segment]
-                            + (1.0 - alfa_segment) * input.y_vent[i_segment]
-                        )
-
-                    elif input.vent_flag == 8:
-                        # input.vent_flag = 1  => the initial lobes are chosen randomly from
-                        #                   the vents coordinates and each vent has
-                        #                   the same probability
-
-                        alfa_vent = np.random.uniform(0, 1, size=1)
-                        i_vent = np.argmax(self.cum_fiss_length > alfa_vent)
-
-                        self.x[i] = input.x_vent[int(i_vent)]
-                        self.y[i] = input.y_vent[int(i_vent)]
+                self.compute_first_lobe_position(i, flow)
 
                 # initialize distance from first lobe and number of descendents
-                self.dist_int[i] = 0
-                descendents[i] = 0
+                self.dist_int[i] = 0  # @NOTE: why is the distance an integer?
+                descendents[i] = 0  # @NOTE: the total number of descendants per lobe?
 
                 # compute the gradient of the topography(+ eventually the flow)
                 # here the centered grid is used (Z values saved at the centers of
                 # the pixels)
                 # xc[ix] < lobe_center_x < xc[ix1]
                 # yc[iy] < lobe_center_y < yc[iy1]
-                xi = (self.x[i] - asc_file.xcmin) / asc_file.cell
-                yi = (self.y[i] - asc_file.ycmin) / asc_file.cell
 
-                ix = np.floor(xi)
-                iy = np.floor(yi)
-
-                ix = ix.astype(int)
-                iy = iy.astype(int)
-
-                # compute the baricentric coordinated of the lobe center in the pixel
-                # 0 < xi_fract < 1
-                # 0 < yi_fract < 1
-                xi_fract = xi - ix
-                yi_fract = yi - iy
-
-                # interpolate the slopes at the edges of the pixel to find the slope
-                # at the center of the lobe
-                Fx_test = (
-                    yi_fract * (Ztot[iy + 1, ix + 1] - Ztot[iy + 1, ix])
-                    + (1.0 - yi_fract) * (Ztot[iy, ix + 1] - Ztot[iy, ix])
-                ) / asc_file.cell
-
-                Fy_test = (
-                    xi_fract * (Ztot[iy + 1, ix + 1] - Ztot[iy, ix + 1])
-                    + (1.0 - xi_fract) * (Ztot[iy + 1, ix] - Ztot[iy, ix])
-                ) / asc_file.cell
-
-                # major semi-axis direction
-                max_slope_angle = np.mod(
-                    180.0 + (180.0 * np.arctan2(Fy_test, Fx_test) / np.pi), 360.0
-                )
-
-                # slope of the topography at (x[0],y[0])
-                slope = np.sqrt(np.square(Fx_test) + np.square(Fy_test))
+                max_slope_angle, slope = self.get_slope(i, Ztot)
 
                 # PERTURBE THE MAXIMUM SLOPE ANGLE ACCORDING TO PROBABILITY LAW
 
