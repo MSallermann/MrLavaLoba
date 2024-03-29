@@ -180,27 +180,27 @@ def parse_input() -> Input:
 
 @dataclass
 class AscFile:
-    cols: int = 0
-    rows: int = 0
-    lx: float = 0
-    ly: float = 0
-    cell: float = 0
-    nd: float = -9999
-    arr = np.array([], dtype=float)
+    cols: int = 0  # @NOTE: number of cols
+    rows: int = 0  # @NOTE: number of rows
+    lx: float = 0  # @NOTE: coordinate of lower left corner
+    ly: float = 0  # @NOTE: coordinate of lower left corner
+    cell: float = 0  # @NOTE: side length of square cell
+    nd: float = -9999  # @NOTE: number that indicates lack of data
+    arr = np.array([], dtype=float)  # @NOTE: array that contains height data
     crop_flag: bool = False
-    nx: int = 0
-    ny: int = 0
-    Xc = np.array([], dtype=float)
-    Yc = np.array([], dtype=float)
-    Zc = np.array([], dtype=float)
-    iW: int = 0
-    iE: int = 0
-    jS: int = 0
-    jN: int = 0
-    xcmin: float = 0
-    xcmax: float = 0
-    ycmin: float = 0
-    ycmax: float = 0
+    nx: int = 0  # @NOTE: number of entries in x direction
+    ny: int = 0  # @NOTE: number of entries in y direction
+    Xc = np.array([], dtype=float)  # @NOTE: meshgrid of X data
+    Yc = np.array([], dtype=float)  # @NOTE: meshgrid of Y data
+    Zc = np.array([], dtype=float)  # @NOTE: array that also contains height data lolol
+    iW: int = 0  # @NOTE: indices used for the crop slice
+    iE: int = 0  # @NOTE: indices used for the crop slice
+    jS: int = 0  # @NOTE: indices used for the crop slice
+    jN: int = 0  # @NOTE: indices used for the crop slice
+    xcmin: float = 0  # @NOTE: np.min(x)
+    xcmax: float = 0  # @NOTE: np.max(x)
+    ycmin: float = 0  # @NOTE: np.min(y)
+    ycmax: float = 0  # @NOTE: np.max(y)
 
 
 def read_asc_file(input: Input):
@@ -541,13 +541,21 @@ class MrLavaLoba:
         self.angle = np.zeros(self.alloc_n_lobes)  # @NOTE: azimuthal angle of lobes
         self.x = np.zeros(self.alloc_n_lobes)  # @NOTE: x position of lobe centers
         self.y = np.zeros(self.alloc_n_lobes)  # @NOTE: y position of lobe centers
-        self.x1 = np.zeros(self.alloc_n_lobes)
-        self.x2 = np.zeros(self.alloc_n_lobes)
-        self.dist_int = np.zeros(self.alloc_n_lobes, dtype=int) - 1
-        self.parent = np.zeros(self.alloc_n_lobes, dtype=int)
-        self.alfa_inertial = np.zeros(self.alloc_n_lobes)
-        h = np.zeros(self.alloc_n_lobes)
-        descendents = np.zeros(self.alloc_n_lobes, dtype=int)
+        self.x1 = np.zeros(self.alloc_n_lobes)  # @NOTE: semi major axis
+        self.x2 = np.zeros(self.alloc_n_lobes)  # @NOTE: semi minor axis
+        self.dist_int = (
+            np.zeros(self.alloc_n_lobes, dtype=int) - 1
+        )  # @NOTE: distance from initial lobe in number of lobes
+        self.parent = np.zeros(
+            self.alloc_n_lobes, dtype=int
+        )  # @NOTE: index of parent lobe
+        self.alfa_inertial = np.zeros(self.alloc_n_lobes)  # ????
+        self.h = np.zeros(
+            self.alloc_n_lobes
+        )  # @NOTE: height of lobe??? seems to be unused
+        self.descendents = np.zeros(
+            self.alloc_n_lobes, dtype=int
+        )  # @NOTE: number of descendant lobes (cumulative?)
 
     def compute_lobe_dimensions(self):
         input = self.input
@@ -1161,7 +1169,7 @@ class MrLavaLoba:
 
         return True, slope, max_slope_angle, zidx
 
-    def compute_lobe_angle(self, max_slope_angle, slope):
+    def perturb_lobe_angle(self, max_slope_angle, slope):
         input = self.input
         # PERTURBE THE MAXIMUM SLOPE ANGLE ACCORDING TO PROBABILITY LAW
         # this expression define a coefficient used for the direction of the
@@ -1574,6 +1582,7 @@ class MrLavaLoba:
         self.load_restarts()
 
         # Define a small grid for lobe-cells intersection (for the local intersections)
+        # This is only used for `local_intersection`
         nv = 15
         self.xv, self.yv = np.meshgrid(
             np.linspace(-0.5 * asc_file.cell, 0.5 * asc_file.cell, nv),
@@ -1584,12 +1593,11 @@ class MrLavaLoba:
         self.nv2 = nv**2
 
         # I think you'd rather do this
-        Ztot = np.array(asc_file.Zc)
+        Ztot = np.array(asc_file.Zc)  # Ztot is the same as asc_file.Zc
         Zflow = np.zeros((asc_file.ny, asc_file.nx))
 
         jtop_array = np.zeros(self.alloc_n_lobes, dtype=int)
         jbottom_array = np.zeros(self.alloc_n_lobes, dtype=int)
-
         iright_array = np.zeros(self.alloc_n_lobes, dtype=int)
         ileft_array = np.zeros(self.alloc_n_lobes, dtype=int)
 
@@ -1616,9 +1624,6 @@ class MrLavaLoba:
 
             # @NOTE: number of decendents ???
             descendents = np.zeros(self.alloc_n_lobes, dtype=int)
-
-            # @NOTE: This seems unused?
-            i_first_check = input.n_check_loop
 
             if (input.a_beta == 0) and (input.b_beta == 0):
                 # DEFINE THE NUMBER OF LOBES OF THE FLOW (RANDOM VALUE BETWEEN
@@ -1661,7 +1666,7 @@ class MrLavaLoba:
 
                 max_slope_angle, slope = self.get_slope(i, Ztot)
 
-                self.angle[i] = self.compute_lobe_angle(max_slope_angle, slope)
+                self.angle[i] = self.perturb_lobe_angle(max_slope_angle, slope)
 
                 self.compute_lobe_axes(i, slope)
 
@@ -1713,7 +1718,7 @@ class MrLavaLoba:
                     # angle defining the direction of the new slope. when slope=0, then
                     # we have an uniform distribution for the possible angles for the
                     # next lobe.
-                    new_angle = self.compute_lobe_angle(max_slope_angle, slope)
+                    new_angle = self.perturb_lobe_angle(max_slope_angle, slope)
 
                 # STEP 3: ADD THE EFFECT OF INERTIA
                 new_angle = self.add_inertia(i, idx, slope, new_angle)
