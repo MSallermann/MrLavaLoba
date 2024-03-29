@@ -1064,6 +1064,103 @@ class MrLavaLoba:
 
         return max_slope_angle, slope
 
+    def get_slope2(self, i, idx, Ztot):
+        asc_file = self.asc_file
+        input = self.input
+
+        xi = (self.x[idx] - asc_file.xcmin) / asc_file.cell
+        yi = (self.y[idx] - asc_file.ycmin) / asc_file.cell
+        ix = np.floor(xi)
+        iy = np.floor(yi)
+        ix = ix.astype(int)
+        iy = iy.astype(int)
+
+        # stopping condition (lobe close the domain boundary)
+        if (
+            (ix <= 0.5 * self.max_cells)
+            or (ix + 1 >= (asc_file.nx - 0.5 * self.max_cells))
+            or (iy <= 0.5 * self.max_cells)
+            or (iy + 1 >= (asc_file.ny - 0.5 * self.max_cells))
+            or (asc_file.Zc[iy, ix] == asc_file.nd)
+            or (asc_file.Zc[iy + 1, ix + 1] == asc_file.nd)
+            or (asc_file.Zc[iy, ix + 1] == asc_file.nd)
+            or (asc_file.Zc[iy + 1, ix] == asc_file.nd)
+        ):
+            last_lobe = i - 1
+            return False, 0, 0, 0
+
+        # compute the baricentric coordinated of the lobe center in the pixel
+        # 0 < xi_fract < 1
+        # 0 < yi_fract < 1
+        xi_fract = xi - ix
+        yi_fract = yi - iy
+
+        # interpolate the elevation at the corners of the pixel to find the
+        # elevation at the center of the lobe
+        zidx = xi_fract * (
+            yi_fract * Ztot[iy + 1, ix + 1] + (1.0 - yi_fract) * Ztot[iy, ix + 1]
+        ) + (1.0 - xi_fract) * (
+            yi_fract * Ztot[iy + 1, ix] + (1.0 - yi_fract) * Ztot[iy, ix]
+        )
+
+        # compute the lobe (input.npoints on the ellipse)
+        [xe, ye] = self.ellipse(
+            self.x[idx],
+            self.y[idx],
+            self.x1[idx],
+            self.x2[idx],
+            self.angle[idx],
+        )
+
+        # For all the points of the ellipse compute the indexes of the pixel
+        # containing the points. This is done with respect to the centered
+        # grid. We want to interpolate from the centered values (elevation)
+        # to the location of the points on the ellipse)
+        xei = (xe - asc_file.xcmin) / asc_file.cell
+        yei = (ye - asc_file.ycmin) / asc_file.cell
+
+        ixe = np.floor(xei)
+        iye = np.floor(yei)
+
+        ixe = ixe.astype(int)
+        iye = iye.astype(int)
+
+        ixe1 = ixe + 1
+        iye1 = iye + 1
+
+        # compute the local coordinates of the points (0<x,y<1) within the
+        # pixels containing them
+        xei_fract = xei - ixe
+        yei_fract = yei - iye
+
+        # interpolate the grid values to find the elevation at the ellipse
+        # points
+        ze = xei_fract * (
+            yei_fract * Ztot[iye1, ixe1] + (1.0 - yei_fract) * Ztot[iye, ixe1]
+        ) + (1.0 - xei_fract) * (
+            yei_fract * Ztot[iye1, ixe] + (1.0 - yei_fract) * Ztot[iye, ixe]
+        )
+
+        # find the point on the ellipse with minimum elevation
+        idx_min = np.argmin(ze)
+
+        # compute the vector from the center of the lobe to the point of
+        # minimum z on the boundary
+        Fx_lobe = self.x[idx] - xe[idx_min]
+        Fy_lobe = self.y[idx] - ye[idx_min]
+
+        # compute the slope and the angle
+        slope = np.maximum(
+            0.0,
+            (zidx - ze[idx_min]) / (np.sqrt(np.square(Fx_lobe) + np.square(Fy_lobe))),
+        )
+
+        max_slope_angle = np.mod(
+            180.0 + (180.0 * np.arctan2(Fy_lobe, Fx_lobe) / np.pi), 360.0
+        )
+
+        return True, slope, max_slope_angle, zidx
+
     def compute_lobe_angle(self, i, max_slope_angle, slope):
         input = self.input
         # PERTURBE THE MAXIMUM SLOPE ANGLE ACCORDING TO PROBABILITY LAW
@@ -1420,121 +1517,12 @@ class MrLavaLoba:
                 # pixels)
                 # xc[ix] < lobe_center_x < xc[ix1]
                 # yc[iy] < lobe_center_y < yc[iy1]
-                xi = (self.x[idx] - asc_file.xcmin) / asc_file.cell
-                yi = (self.y[idx] - asc_file.ycmin) / asc_file.cell
+                status, slope, max_slope_angle, zidx = self.get_slope2(i, idx, Ztot)
 
-                ix = np.floor(xi)
-                iy = np.floor(yi)
-
-                ix = ix.astype(int)
-                iy = iy.astype(int)
-
-                ix1 = ix + 1
-                iy1 = iy + 1
-
-                # stopping condition (lobe close the domain boundary)
-                if (
-                    (ix <= 0.5 * self.max_cells)
-                    or (ix1 >= (asc_file.nx - 0.5 * self.max_cells))
-                    or (iy <= 0.5 * self.max_cells)
-                    or (iy1 >= (asc_file.ny - 0.5 * self.max_cells))
-                    or (asc_file.Zc[iy, ix] == asc_file.nd)
-                    or (asc_file.Zc[iy1, ix1] == asc_file.nd)
-                    or (asc_file.Zc[iy, ix1] == asc_file.nd)
-                    or (asc_file.Zc[iy1, ix] == asc_file.nd)
-                ):
-                    last_lobe = i - 1
+                if not status:
                     break
 
-                # compute the baricentric coordinated of the lobe center in the pixel
-                # 0 < xi_fract < 1
-                # 0 < yi_fract < 1
-                xi_fract = xi - ix
-                yi_fract = yi - iy
-
-                # interpolate the elevation at the corners of the pixel to find the
-                # elevation at the center of the lobe
-                zidx = xi_fract * (
-                    yi_fract * Ztot[iy1, ix1] + (1.0 - yi_fract) * Ztot[iy, ix1]
-                ) + (1.0 - xi_fract) * (
-                    yi_fract * Ztot[iy1, ix] + (1.0 - yi_fract) * Ztot[iy, ix]
-                )
-                """
-                # interpolate the slopes at the edges of the pixel to find the slope
-                # at the center of the lobe
-                Fx_lobe = ( yi_fract * ( Ztot[iy1,ix1] - Ztot[iy1,ix] ) \
-                            + (1.0-yi_fract) * ( Ztot[iy,ix1] - Ztot[iy,ix] ) ) / cell
-
-                Fy_lobe = ( xi_fract * ( Ztot[iy1,ix1] - Ztot[iy,ix1] ) \
-                            + (1.0-xi_fract) * ( Ztot[iy1,ix] - Ztot[iy,ix] ) ) / cell
-
-
-                slope = np.sqrt(np.square(Fx_lobe)+np.square(Fy_lobe))
-                # angle defining the direction of maximum slope
-                # (max_slope_angle = aspect)
-                max_slope_angle = np.mod(
-                    180 + ( 180 * np.arctan2(Fy_lobe,Fx_lobe) / np.pi ),360.0)
-                """
-
-                # compute the lobe (input.npoints on the ellipse)
-                [xe, ye] = self.ellipse(
-                    self.x[idx],
-                    self.y[idx],
-                    self.x1[idx],
-                    self.x2[idx],
-                    self.angle[idx],
-                )
-
-                # For all the points of the ellipse compute the indexes of the pixel
-                # containing the points. This is done with respect to the centered
-                # grid. We want to interpolate from the centered values (elevation)
-                # to the location of the points on the ellipse)
-                xei = (xe - asc_file.xcmin) / asc_file.cell
-                yei = (ye - asc_file.ycmin) / asc_file.cell
-
-                ixe = np.floor(xei)
-                iye = np.floor(yei)
-
-                ixe = ixe.astype(int)
-                iye = iye.astype(int)
-
-                ixe1 = ixe + 1
-                iye1 = iye + 1
-
-                # compute the local coordinates of the points (0<x,y<1) within the
-                # pixels containing them
-                xei_fract = xei - ixe
-                yei_fract = yei - iye
-
-                # interpolate the grid values to find the elevation at the ellipse
-                # points
-                ze = xei_fract * (
-                    yei_fract * Ztot[iye1, ixe1] + (1.0 - yei_fract) * Ztot[iye, ixe1]
-                ) + (1.0 - xei_fract) * (
-                    yei_fract * Ztot[iye1, ixe] + (1.0 - yei_fract) * Ztot[iye, ixe]
-                )
-
-                # find the point on the ellipse with minimum elevation
-                idx_min = np.argmin(ze)
-
-                # compute the vector from the center of the lobe to the point of
-                # minimum z on the boundary
-                Fx_lobe = self.x[idx] - xe[idx_min]
-                Fy_lobe = self.y[idx] - ye[idx_min]
-
-                # compute the slope and the angle
-                slope = np.maximum(
-                    0.0,
-                    (zidx - ze[idx_min])
-                    / (np.sqrt(np.square(Fx_lobe) + np.square(Fy_lobe))),
-                )
-
-                max_slope_angle = np.mod(
-                    180.0 + (180.0 * np.arctan2(Fy_lobe, Fx_lobe) / np.pi), 360.0
-                )
-
                 # STEP 2: PERTURBE THE MAXIMUM SLOPE ANGLE ACCORDING TO PROBABILITY LAW
-
                 # this expression define a coefficient used for the direction of the
                 # next slope
                 if input.max_slope_prob < 1:
