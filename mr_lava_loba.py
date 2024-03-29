@@ -1430,6 +1430,110 @@ class MrLavaLoba:
 
         #         new_angle = angle_avg
 
+    def get_new_lobe_center(self, i, new_angle, idx, Ztot, zidx):
+        asc_file = self.asc_file
+        input = self.input
+
+        a = np.tan(np.pi / 180.0 * (new_angle - self.angle[idx]))
+
+        # xt is the 1st-coordinate of the point of the boundary of the ellipse
+        # definind the direction of the new lobe, in a coordinate system
+        # defined by the semi-axes of the existing lobe
+        if np.cos(np.pi / 180.0 * (new_angle - self.angle[idx])) > 0:
+            xt = np.sqrt(
+                self.x1[idx] ** 2
+                * self.x2[idx] ** 2
+                / (self.x2[idx] ** 2 + self.x1[idx] ** 2 * a**2)
+            )
+
+        else:
+            xt = -np.sqrt(
+                self.x1[idx] ** 2
+                * self.x2[idx] ** 2
+                / (self.x2[idx] ** 2 + self.x1[idx] ** 2 * a**2)
+            )
+
+        # yt is the 2nd-coordinate of the point of the boundary of the ellipse
+        # definind the direction of the new lobe, in a coordinate system
+        # defined by the semi-axes of the existing lobe
+        yt = a * xt
+
+        # (delta_x,delta_y) is obtained rotating the vector (xt,yt) by the
+        # angle defined by the major semi-axis of the existing lobe. In this
+        # way we obtain the location in a coordinate-system centered in the
+        # center of the existing lobe, but this time with the axes parallel to
+        # the original x and y axes.
+
+        cos_angle1 = np.cos(self.angle[idx] * np.pi / 180.0)
+        sin_angle1 = np.sin(self.angle[idx] * np.pi / 180.0)
+        delta_x = xt * cos_angle1 - yt * sin_angle1
+        delta_y = xt * sin_angle1 + yt * cos_angle1
+
+        # the slope coefficient is evaluated at the point of the boundary of
+        # the ellipse definind by the direction of the new lobe
+
+        xi = (self.x[idx] + delta_x - asc_file.xcmin) / asc_file.cell
+        yi = (self.y[idx] + delta_y - asc_file.ycmin) / asc_file.cell
+
+        ix = np.floor(xi)
+        iy = np.floor(yi)
+
+        ix = ix.astype(int)
+        iy = iy.astype(int)
+
+        ix1 = ix + 1
+        iy1 = iy + 1
+
+        # stopping condition (lobe close the domain boundary)
+        if (
+            (ix <= 0.5 * self.max_cells)
+            or (ix1 >= asc_file.nx - 0.5 * self.max_cells)
+            or (iy <= 0.5 * self.max_cells)
+            or (iy1 >= asc_file.ny - 0.5 * self.max_cells)
+        ):
+            # print('ix',ix,'iy',iy)
+            last_lobe = i - 1
+            return None
+
+        xi_fract = xi - ix
+        yi_fract = yi - iy
+
+        # ztot at the new budding point
+        ze = xi_fract * (
+            yi_fract * Ztot[iy1, ix1] + (1.0 - yi_fract) * Ztot[iy, ix1]
+        ) + (1.0 - xi_fract) * (
+            yi_fract * Ztot[iy1, ix] + (1.0 - yi_fract) * Ztot[iy, ix]
+        )
+
+        slope = np.maximum(
+            0.0,
+            (zidx - ze) / (np.sqrt(np.square(delta_x) + np.square(delta_y))),
+        )
+
+        aspect_ratio = min(
+            input.max_aspect_ratio, 1.0 + input.aspect_ratio_coeff * slope
+        )
+
+        # (new_x1,new_x2) are the semi-axes of the new lobe. slope_coeff is
+        # used to have an elongated lobe accoriding to the slope of the
+        # topography. It is possible to modifiy these values in order to have
+        # the same volume for all the lobes.
+        new_x1 = np.sqrt(input.lobe_area / np.pi) * np.sqrt(aspect_ratio)
+        new_x2 = np.sqrt(input.lobe_area / np.pi) / np.sqrt(aspect_ratio)
+
+        # v1 is the distance of the new point found on the boundary of the lobe
+        # from the center of the lobe
+        v1 = np.sqrt(delta_x**2 + delta_y**2)
+
+        # v2 is the distance between the centers of the two lobes when they
+        # intersect in one point only
+        v2 = v1 + new_x1
+
+        # v is the distance between the centers of the two lobes, according to
+        # the value of the parameter input.dist_fact
+        v = (v1 * (1.0 - input.dist_fact) + v2 * input.dist_fact) / v1
+        return [v, delta_x, delta_y, new_x1, new_x2]
+
     def run(self):
         input = self.input
 
@@ -1614,104 +1718,12 @@ class MrLavaLoba:
                 # a define the ang.coeff. of the line defining the location of the
                 # center of the new lobe in a coordinate system defined by the
                 # semi-axes of the existing lobe
-                a = np.tan(np.pi / 180.0 * (new_angle - self.angle[idx]))
-
-                # xt is the 1st-coordinate of the point of the boundary of the ellipse
-                # definind the direction of the new lobe, in a coordinate system
-                # defined by the semi-axes of the existing lobe
-                if np.cos(np.pi / 180.0 * (new_angle - self.angle[idx])) > 0:
-                    xt = np.sqrt(
-                        self.x1[idx] ** 2
-                        * self.x2[idx] ** 2
-                        / (self.x2[idx] ** 2 + self.x1[idx] ** 2 * a**2)
-                    )
-
-                else:
-                    xt = -np.sqrt(
-                        self.x1[idx] ** 2
-                        * self.x2[idx] ** 2
-                        / (self.x2[idx] ** 2 + self.x1[idx] ** 2 * a**2)
-                    )
-
-                # yt is the 2nd-coordinate of the point of the boundary of the ellipse
-                # definind the direction of the new lobe, in a coordinate system
-                # defined by the semi-axes of the existing lobe
-                yt = a * xt
-
-                # (delta_x,delta_y) is obtained rotating the vector (xt,yt) by the
-                # angle defined by the major semi-axis of the existing lobe. In this
-                # way we obtain the location in a coordinate-system centered in the
-                # center of the existing lobe, but this time with the axes parallel to
-                # the original x and y axes.
-
-                cos_angle1 = np.cos(self.angle[idx] * np.pi / 180.0)
-                sin_angle1 = np.sin(self.angle[idx] * np.pi / 180.0)
-                delta_x = xt * cos_angle1 - yt * sin_angle1
-                delta_y = xt * sin_angle1 + yt * cos_angle1
-
-                # the slope coefficient is evaluated at the point of the boundary of
-                # the ellipse definind by the direction of the new lobe
-
-                xi = (self.x[idx] + delta_x - asc_file.xcmin) / asc_file.cell
-                yi = (self.y[idx] + delta_y - asc_file.ycmin) / asc_file.cell
-
-                ix = np.floor(xi)
-                iy = np.floor(yi)
-
-                ix = ix.astype(int)
-                iy = iy.astype(int)
-
-                ix1 = ix + 1
-                iy1 = iy + 1
-
-                # stopping condition (lobe close the domain boundary)
-                if (
-                    (ix <= 0.5 * self.max_cells)
-                    or (ix1 >= asc_file.nx - 0.5 * self.max_cells)
-                    or (iy <= 0.5 * self.max_cells)
-                    or (iy1 >= asc_file.ny - 0.5 * self.max_cells)
-                ):
-                    # print('ix',ix,'iy',iy)
+                res = self.get_new_lobe_center(i, new_angle, idx, Ztot, zidx)
+                if res is None:
                     last_lobe = i - 1
                     break
 
-                xi_fract = xi - ix
-                yi_fract = yi - iy
-
-                # ztot at the new budding point
-                ze = xi_fract * (
-                    yi_fract * Ztot[iy1, ix1] + (1.0 - yi_fract) * Ztot[iy, ix1]
-                ) + (1.0 - xi_fract) * (
-                    yi_fract * Ztot[iy1, ix] + (1.0 - yi_fract) * Ztot[iy, ix]
-                )
-
-                slope = np.maximum(
-                    0.0,
-                    (zidx - ze) / (np.sqrt(np.square(delta_x) + np.square(delta_y))),
-                )
-
-                aspect_ratio = min(
-                    input.max_aspect_ratio, 1.0 + input.aspect_ratio_coeff * slope
-                )
-
-                # (new_x1,new_x2) are the semi-axes of the new lobe. slope_coeff is
-                # used to have an elongated lobe accoriding to the slope of the
-                # topography. It is possible to modifiy these values in order to have
-                # the same volume for all the lobes.
-                new_x1 = np.sqrt(input.lobe_area / np.pi) * np.sqrt(aspect_ratio)
-                new_x2 = np.sqrt(input.lobe_area / np.pi) / np.sqrt(aspect_ratio)
-
-                # v1 is the distance of the new point found on the boundary of the lobe
-                # from the center of the lobe
-                v1 = np.sqrt(delta_x**2 + delta_y**2)
-
-                # v2 is the distance between the centers of the two lobes when they
-                # intersect in one point only
-                v2 = v1 + new_x1
-
-                # v is the distance between the centers of the two lobes, according to
-                # the value of the parameter input.dist_fact
-                v = (v1 * (1.0 - input.dist_fact) + v2 * input.dist_fact) / v1
+                [v, delta_x, delta_y, new_x1, new_x2] = res
 
                 # STEP 5: BUILD THE NEW LOBE
 
