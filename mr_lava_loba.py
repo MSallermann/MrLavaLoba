@@ -850,7 +850,7 @@ class MrLavaLoba:
             Zc = Zc + (Zflow_old * filling_parameter_i)
             print("Restart file read")
 
-    def print_status(self, flow, est_rem_time):
+    def print_flow_status(self, flow, est_rem_time):
         input = self.input
 
         if input.n_flows > 1 and not ("SLURM_JOB_NAME" in os.environ.keys()):
@@ -863,6 +863,18 @@ class MrLavaLoba:
             sys.stdout.write(
                 "[%-20s] %d%% %s"
                 % ("=" * (last_percentage_5), last_percentage, est_rem_time)
+            )
+            sys.stdout.flush()
+
+    def print_lobe_status(self, i, n_lobes):
+        input = self.input
+
+        if input.n_flows == 1 and "SLURM_JOB_NAME" not in os.environ.keys():
+            # print on screen bar with percentage of flows computed
+            last_percentage = np.rint(i * 20.0 / (n_lobes - 1)) * 5
+            sys.stdout.write("\r")
+            sys.stdout.write(
+                "[%-20s] %d%%" % ("=" * (last_percentage / 5), last_percentage)
             )
             sys.stdout.flush()
 
@@ -1097,6 +1109,7 @@ class MrLavaLoba:
         Zflow,
         Ztot,
         Zdist,
+        Zflow_local_array,
         jtop_array,
         jbottom_array,
         iright_array,
@@ -1309,21 +1322,11 @@ class MrLavaLoba:
                 2.0 * (self.avg_lobe_thickness - self.thickness_min) / (n_lobes - 1.0)
             )
 
-            self.print_status(flow, est_rem_time)
+            self.print_flow_status(flow, est_rem_time)
 
+            # @NOTE: this loops over the n_init initial lobes
             for i in range(0, input.n_init):
-                if input.n_flows == 1 and not ("SLURM_JOB_NAME" in os.environ.keys()):
-                    # print on screen bar with percentage of flows computed
-                    last_percentage = np.rint(i * 20.0 / (n_lobes - 1)) * 5
-                    last_percentage = last_percentage.astype(int)
-
-                    sys.stdout.write("\r")
-                    sys.stdout.write(
-                        "[%-20s] %d%%" % ("=" * (last_percentage / 5), last_percentage)
-                    )
-                    sys.stdout.flush()
-                else:
-                    pass
+                self.print_lobe_status(i, n_lobes)
 
                 # STEP 0: COMPUTE THE FIRST LOBES OF EACH FLOW
                 self.compute_first_lobe_position(i, flow)
@@ -1344,6 +1347,7 @@ class MrLavaLoba:
                     Zflow,
                     Ztot,
                     Zdist,
+                    Zflow_local_array,
                     jtop_array,
                     jbottom_array,
                     iright_array,
@@ -1352,18 +1356,11 @@ class MrLavaLoba:
 
             last_lobe = n_lobes
 
+            # @NOTE: this loops over the rest of the lobes (skipping the initial ones)
             for i in range(input.n_init, n_lobes):
                 # print('i',i)
 
-                if input.n_flows == 1 and "SLURM_JOB_NAME" not in os.environ.keys():
-                    # print on screen bar with percentage of flows computed
-                    last_percentage = np.rint(i * 20.0 / (n_lobes - 1)) * 5
-                    sys.stdout.write("\r")
-                    sys.stdout.write(
-                        "[%-20s] %d%%" % ("=" * (last_percentage / 5), last_percentage)
-                    )
-                    sys.stdout.flush()
-
+                self.print_lobe_status(i, n_lobes)
                 # STEP 0: DEFINE THE INDEX idx OF THE PARENT LOBE
 
                 if input.lobe_exponent > 0:
