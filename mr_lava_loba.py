@@ -1161,7 +1161,7 @@ class MrLavaLoba:
 
         return True, slope, max_slope_angle, zidx
 
-    def compute_lobe_angle(self, i, max_slope_angle, slope):
+    def compute_lobe_angle(self, max_slope_angle, slope):
         input = self.input
         # PERTURBE THE MAXIMUM SLOPE ANGLE ACCORDING TO PROBABILITY LAW
         # this expression define a coefficient used for the direction of the
@@ -1184,10 +1184,9 @@ class MrLavaLoba:
                 rand = np.random.uniform(0, 1, size=1)
                 rand_angle_new = 360.0 * np.abs(rand - 0.5)
 
-            self.angle[i] = max_slope_angle + rand_angle_new
-
+            return max_slope_angle + rand_angle_new
         else:
-            self.angle[i] = max_slope_angle
+            return max_slope_angle
 
     def compute_lobe_axes(self, i, slope):
         input = self.input
@@ -1479,7 +1478,7 @@ class MrLavaLoba:
 
                 max_slope_angle, slope = self.get_slope(i, Ztot)
 
-                self.compute_lobe_angle(i, max_slope_angle, slope)
+                self.angle[i] = self.compute_lobe_angle(max_slope_angle, slope)
 
                 self.compute_lobe_axes(i, slope)
 
@@ -1525,6 +1524,7 @@ class MrLavaLoba:
                 # STEP 2: PERTURBE THE MAXIMUM SLOPE ANGLE ACCORDING TO PROBABILITY LAW
                 # this expression define a coefficient used for the direction of the
                 # next slope
+
                 if input.max_slope_prob < 1:
                     # angle defining the direction of the new slope. when slope=0, then
                     # we have an uniform distribution for the possible angles for the
